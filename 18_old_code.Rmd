@@ -1,0 +1,184 @@
+---
+title: "ios_esms.Rmd"
+output: html_document
+---
+
+```{r}
+library(anytime)
+library(plyr)
+esms = as.data.frame(esms_view)
+esms$double_esm_user_answer_timestamp = as.character(anytime(as.numeric(as.character(esms$double_esm_user_answer_timestamp))/1000))
+esms$device_id = substr(as.character(esms$device_id), 1, 8)
+esms$mj_id = NA
+esms$mj_id[esms$device_id == "afbfd16a"] = "ID002"
+esms$mj_id[esms$device_id == "6c712563"] = "ID003"
+esms$mj_id[esms$device_id == "210bac62"] = "ID004"
+esms$mj_id[esms$device_id == "6d67299d"] = "ID005"
+esms$mj_id[esms$device_id == "08d6bdfb"] = "ID006"
+esms$mj_id[esms$device_id == "2140d873"] = "ID007"
+esms$mj_id[esms$device_id == "2cd6b9f5"] = "ID008"
+esms = esms[complete.cases(esms),]
+esms = split(esms, f=esms$device_id)
+
+ID002.df = as.data.frame(esms[1])
+ID003.df = as.data.frame(esms[2])
+ID004.df = as.data.frame(esms[3])
+ID005.df = as.data.frame(esms[4])
+ID006.df = as.data.frame(esms[5])
+ID007.df = as.data.frame(esms[6])
+ID008.df = as.data.frame(esms[7])
+
+ID002.df = rename(ID002.df, c("X08d6bdfb.double_esm_user_answer_timestamp"="timestamp", "X08d6bdfb.device_id"="device_id", "X08d6bdfb.esm_trigger"="esm_trigger", "X08d6bdfb.esm_user_answer"="esm_user_answer", "X08d6bdfb.mj_id"="mj_id"))
+ID003.df = rename(ID003.df, c("X210bac62.double_esm_user_answer_timestamp"="timestamp", "X210bac62.device_id"="device_id", "X210bac62.esm_trigger"="esm_trigger", "X210bac62.esm_user_answer"="esm_user_answer", "X210bac62.mj_id"="mj_id"))
+ID004.df = rename(ID004.df, c("X2140d873.double_esm_user_answer_timestamp"="timestamp", "X2140d873.device_id"="device_id", "X2140d873.esm_trigger"="esm_trigger", "X2140d873.esm_user_answer"="esm_user_answer", "X2140d873.mj_id"="mj_id"))
+ID005.df = rename(ID005.df, c("X2cd6b9f5.double_esm_user_answer_timestamp"="timestamp", "X2cd6b9f5.device_id"="device_id", "X2cd6b9f5.esm_trigger"="esm_trigger", "X2cd6b9f5.esm_user_answer"="esm_user_answer", "X2cd6b9f5.mj_id"="mj_id"))
+ID006.df = rename(ID006.df, c("X6c712563.double_esm_user_answer_timestamp"="timestamp", "X6c712563.device_id"="device_id", "X6c712563.esm_trigger"="esm_trigger", "X6c712563.esm_user_answer"="esm_user_answer", "X6c712563.mj_id"="mj_id"))
+ID007.df = rename(ID007.df, c("X6d67299d.double_esm_user_answer_timestamp"="timestamp", "X6d67299d.device_id"="device_id", "X6d67299d.esm_trigger"="esm_trigger", "X6d67299d.esm_user_answer"="esm_user_answer", "X6d67299d.mj_id"="mj_id"))
+ID008.df = rename(ID008.df, c("afbfd16a.double_esm_user_answer_timestamp"="timestamp", "afbfd16a.device_id"="device_id", "afbfd16a.esm_trigger"="esm_trigger", "afbfd16a.esm_user_answer"="esm_user_answer", "afbfd16a.mj_id"="mj_id"))
+```
+
+```{r}
+ID002.df$surtype = NA
+ID002.df$yes.no = NA
+ID002.df$datetime = NA
+ID002.df$method = NA
+ID002.df$amount = NA
+ID002.df$other.use = NA
+ID002.df$craving = NA
+ID002.df$num.drinks = NA
+ID002.df$num.cig = NA
+ID002.df$relaxed = NA
+ID002.df$sluggish = NA
+ID002.df$foggy = NA
+ID002.df$anxious = NA
+ID002.df$sad = NA
+ID002.df$solve.learn = NA
+ID002.df$remember = NA
+ID002.df$attention = NA
+ID002.df$concentrate = NA
+ID002.df$start = NA
+ID002.df$end = NA
+ID002.df$how.high = NA
+ID002.df$alone.others = NA
+ID002.df$reason = NA
+ID002.df$place = NA
+
+for (row in 1:nrow(ID002.df)) {
+  if (grepl("morning", ID002.df$esm_trigger[row]))
+    ID002.df$surtype[row] = "morning"
+  if (grepl("afternoon", ID002.df$esm_trigger[row]))
+    ID002.df$surtype[row] = "afternoon"
+  if (grepl("evening", ID002.df$esm_trigger[row]))
+    ID002.df$surtype[row] = "evening"
+  if (grepl("start", ID002.df$esm_trigger[row]))
+    ID002.df$surtype[row] = "self.start"
+  if (grepl("end", ID002.df$esm_trigger[row]))
+    ID002.df$surtype[row] = "self.end"
+  if (grepl("morning_0_datetime", ID002.df$esm_trigger[row])) #last time used
+    ID002.df$datetime[row] = ID002.df$esm_user_answer[row]
+  if (grepl("morning_1_checkbox", ID002.df$esm_trigger[row])) #method last time
+    ID002.df$method[row] = ID002.df$esm_user_answer[row]
+  if (grepl("morning_2_number", ID002.df$esm_trigger[row])) #amount last time
+    ID002.df$amount[row] = ID002.df$esm_user_answer[row]
+  if (grepl("morning_3_slider", ID002.df$esm_trigger[row])) #craving right now
+    ID002.df$craving[row] = ID002.df$esm_user_answer[row]
+  if (grepl("morning_4_number", ID002.df$esm_trigger[row])) #drinks yesterday
+    ID002.df$num.drinks[row] = ID002.df$esm_user_answer[row]
+  if (grepl("morning_5_number", ID002.df$esm_trigger[row])) #cigarettes yesterday
+    ID002.df$num.cig[row] = ID002.df$esm_user_answer[row]
+  if (grepl("morning_6_slider", ID002.df$esm_trigger[row])) #feeling relaxed
+    ID002.df$relaxed[row] = ID002.df$esm_user_answer[row]
+  if (grepl("morning_7_slider", ID002.df$esm_trigger[row])) #feeling sluggish
+    ID002.df$sluggish[row] = ID002.df$esm_user_answer[row]
+  if (grepl("morning_8_slider", ID002.df$esm_trigger[row])) #foggy thinking
+    ID002.df$foggy[row] = ID002.df$esm_user_answer[row]
+  if (grepl("morning_9_slider", ID002.df$esm_trigger[row])) #feeling anxious
+    ID002.df$anxious[row] = ID002.df$esm_user_answer[row]
+  if (grepl("morning_10_slider", ID002.df$esm_trigger[row])) #feeling sad
+    ID002.df$sad[row] = ID002.df$esm_user_answer[row]
+}
+
+ID002.final = ddply(ID002.df, .(timestamp), summarize, device_id=unique(device_id), surtype=unique(surtype), yes.no=paste(yes.no,collapse=" "), datetime=paste(datetime,collapse=" "), method=paste(method,collapse=" "), amount=paste(amount,collapse=" "), other.use=paste(other.use,collapse=" "), craving=paste(craving,collapse=" "), num.drinks=paste(num.drinks,collapse=" "), num.cig=paste(num.cig,collapse=" "), relaxed=paste(relaxed,collapse=" "), sluggish=paste(sluggish,collapse=" "), foggy=paste(foggy,collapse=" "), anxious=paste(anxious,collapse=" "), sad=paste(sad,collapse=" "), solve.learn=paste(solve.learn,collapse=" "), remember=paste(remember,collapse=" "), attention=paste(attention,collapse=" "), concentrate=paste(concentrate,collapse=" "), start=paste(start,collapse=" "), end=paste(end,collapse=" "), how.high=paste(how.high,collapse=" "), alone.others=paste(alone.others,collapse=" "), reason=paste(reason,collapse=" "), place=paste(place,collapse=" "))
+
+for (row in 1:nrow(ID002.final)) {
+  for (col in 1:length(ID002.final)) {
+    ID002.final[row,col] = gsub(pattern="NA",replacement="", x=ID002.final[row,col])
+  }
+}
+
+ID002.final
+
+```
+
+```{r}
+ID003.df$surtype = NA
+ID003.df$yes.no = NA
+ID003.df$datetime = NA
+ID003.df$method = NA
+ID003.df$amount = NA
+ID003.df$other.use = NA
+ID003.df$craving = NA
+ID003.df$num.drinks = NA
+ID003.df$num.cig = NA
+ID003.df$relaxed = NA
+ID003.df$sluggish = NA
+ID003.df$foggy = NA
+ID003.df$anxious = NA
+ID003.df$sad = NA
+ID003.df$solve.learn = NA
+ID003.df$remember = NA
+ID003.df$attention = NA
+ID003.df$concentrate = NA
+ID003.df$start = NA
+ID003.df$end = NA
+ID003.df$how.high = NA
+ID003.df$alone.others = NA
+ID003.df$reason = NA
+ID003.df$place = NA
+
+for (row in 1:nrow(ID003.df)) {
+  if (grepl("morning", ID003.df$esm_trigger[row]))
+    ID003.df$surtype[row] = "morning"
+  if (grepl("afternoon", ID003.df$esm_trigger[row]))
+    ID003.df$surtype[row] = "afternoon"
+  if (grepl("evening", ID003.df$esm_trigger[row]))
+    ID003.df$surtype[row] = "evening"
+  if (grepl("start", ID003.df$esm_trigger[row]))
+    ID003.df$surtype[row] = "self.start"
+  if (grepl("end", ID003.df$esm_trigger[row]))
+    ID003.df$surtype[row] = "self.end"
+  if (grepl("morning_0_datetime", ID003.df$esm_trigger[row])) #last time used
+    ID003.df$datetime[row] = ID003.df$esm_user_answer[row]
+  if (grepl("morning_1_checkbox", ID003.df$esm_trigger[row])) #method last time
+    ID003.df$method[row] = ID003.df$esm_user_answer[row]
+  if (grepl("morning_2_number", ID003.df$esm_trigger[row])) #amount last time
+    ID003.df$amount[row] = ID003.df$esm_user_answer[row]
+  if (grepl("morning_3_slider", ID002.df$esm_trigger[row])) #craving right now
+    ID003.df$craving[row] = ID003.df$esm_user_answer[row]
+  if (grepl("morning_4_number", ID003.df$esm_trigger[row])) #drinks yesterday
+    ID003.df$num.drinks[row] = ID003.df$esm_user_answer[row]
+  if (grepl("morning_5_number", ID003.df$esm_trigger[row])) #cigarettes yesterday
+    ID003.df$num.cig[row] = ID003.df$esm_user_answer[row]
+  if (grepl("morning_6_slider", ID003.df$esm_trigger[row])) #feeling relaxed
+    ID003.df$relaxed[row] = ID003.df$esm_user_answer[row]
+  if (grepl("morning_7_slider", ID003.df$esm_trigger[row])) #feeling sluggish
+    ID003.df$sluggish[row] = ID003.df$esm_user_answer[row]
+  if (grepl("morning_8_slider", ID003.df$esm_trigger[row])) #foggy thinking
+    ID003.df$foggy[row] = ID003.df$esm_user_answer[row]
+  if (grepl("morning_9_slider", ID003.df$esm_trigger[row])) #feeling anxious
+    ID003.df$anxious[row] = ID003.df$esm_user_answer[row]
+  if (grepl("morning_10_slider", ID003.df$esm_trigger[row])) #feeling sad
+    ID003.df$sad[row] = ID003.df$esm_user_answer[row]
+}
+
+ID003.final = ddply(ID003.df, .(timestamp), summarize, device_id=unique(device_id), surtype=unique(surtype), yes.no=paste(yes.no,collapse=" "), datetime=paste(datetime,collapse=" "), method=paste(method,collapse=" "), amount=paste(amount,collapse=" "), other.use=paste(other.use,collapse=" "), craving=paste(craving,collapse=" "), num.drinks=paste(num.drinks,collapse=" "), num.cig=paste(num.cig,collapse=" "), relaxed=paste(relaxed,collapse=" "), sluggish=paste(sluggish,collapse=" "), foggy=paste(foggy,collapse=" "), anxious=paste(anxious,collapse=" "), sad=paste(sad,collapse=" "), solve.learn=paste(solve.learn,collapse=" "), remember=paste(remember,collapse=" "), attention=paste(attention,collapse=" "), concentrate=paste(concentrate,collapse=" "), start=paste(start,collapse=" "), end=paste(end,collapse=" "), how.high=paste(how.high,collapse=" "), alone.others=paste(alone.others,collapse=" "), reason=paste(reason,collapse=" "), place=paste(place,collapse=" "))
+
+for (row in 1:nrow(ID003.final)) {
+  for (col in 1:length(ID003.final)) {
+    ID003.final[row,col] = gsub(pattern="NA",replacement="", x=ID003.final[row,col])
+  }
+}
+
+ID003.final
+
+```

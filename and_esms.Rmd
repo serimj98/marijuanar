@@ -1,0 +1,611 @@
+---
+title: "and_esms.Rmd"
+author: "Serim Jang (serimj)"
+date: "5/20/2019"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(anytime)
+library(gdata)
+
+## double_esm_user_answer_timestamp: time participant answered survey
+## device_id: device used to complete esm
+## question_type: question code of participant's responses
+## question_answers: participant's responses
+
+esms1 <- read.csv("R_and_esms2.csv", header = TRUE)
+esms2 <- read.csv("R_and_esms3.csv", header = TRUE)
+esms <- rbind(esms1, esms2)
+```
+
+```{r}
+# Converting columns to readable data
+
+esms$device_id <- as.character(esms$device_id)
+esms$question_type <- as.character(esms$question_type)
+esms$question_answers <- as.character(esms$question_answers)
+
+# extract_timestamp(timestamp): change POSIXct values to readable time
+## timestamp: column with time participant answered survey
+extract_timestamp <- function(timestamp) {
+  return (as.character(anytime(timestamp/1000)))
+}
+
+esms$timestamp <- extract_timestamp(esms$timestamp)
+
+esms <- esms[!(is.na(esms$question_answers)),]
+esms <- esms[!(esms$question_answers == "{}"),]
+```
+
+```{r}
+# Integrating data with new columns to match responses into a new dataframe
+
+final <- data.frame(device_id = esms$device_id,
+                    timestamp = esms$timestamp, 
+                    survey_type = character(nrow(esms)), 
+                    start_time = character(nrow(esms)), 
+                    end_time = character(nrow(esms)),
+                    method = character(nrow(esms)),
+                    amount = character(nrow(esms)),
+                    unit = character(nrow(esms)),
+                    craving = character(nrow(esms)),
+                    how_high = character(nrow(esms)),
+                    drinks = character(nrow(esms)),
+                    cigarettes = character(nrow(esms)),
+                    other_use = character(nrow(esms)),
+                    reason = character(nrow(esms)),
+                    place = character(nrow(esms)),
+                    alone = character(nrow(esms)),
+                    relaxed = character(nrow(esms)),
+                    sluggish = character(nrow(esms)),
+                    foggy = character(nrow(esms)),
+                    anxious = character(nrow(esms)),
+                    sad = character(nrow(esms)),
+                    solving = character(nrow(esms)),
+                    remembering = character(nrow(esms)),
+                    attention = character(nrow(esms)),
+                    concentrating = character(nrow(esms)),
+                    stringsAsFactors = FALSE)
+```
+
+```{r}
+# extract_survey_type(trigger, survey_type): find the type of survey
+## trigger: column with question code of participant's responses
+## survey_type: empty column meant to be filled with survey type
+extract_survey_type <- function(trigger, survey_type) {
+  for (i in 1:length(trigger)) {
+    if (grepl("morning", trigger[i], fixed = TRUE)) {
+      survey_type[i] = "morning"
+    }
+    else if (grepl("afternoon", trigger[i], fixed = TRUE)) {
+      survey_type[i] = "afternoon"
+    }
+    else if (grepl("evening", trigger[i], fixed = TRUE)) {
+      survey_type[i] = "evening"
+    }
+    else if (grepl("start", trigger[i], fixed = TRUE)) {
+      survey_type[i] = "start"
+    }
+    else if (grepl("end", trigger[i], fixed = TRUE)) {
+      survey_type[i] = "end"
+    }
+  }
+  return (survey_type)
+}
+
+final$survey_type <- extract_survey_type(esms$question_type, final$survey_type)
+```
+
+```{r}
+# extract_response(answer, pattern): find response from string of responses
+## answer: string with participant's responses
+## pattern: string with question code of participant's responses
+extract_response <- function(answer, pattern) {
+  answer = str_replace_all(answer, "\\p{quotation mark}", "")
+  answer = substr(answer, 2, nchar(answer) - 1)
+  str_list = unlist(strsplit(answer, '\\,'))
+    
+  for (i in 1:length(str_list)) {
+    if (grepl(pattern, str_list[i], fixed = TRUE)) {
+      resp = sub(".*?:", "", str_list[i])
+      break
+    }
+  }
+  return (resp)
+}
+```
+
+```{r}
+# extract_start_time(answer, start_time): find start time used marijuana
+## answer: column with participant's responses
+## start_time: empty column meant to be filled with start time used marijuana
+extract_start_time <- function(answer, start_time) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_0_datetime", answer[i], fixed = TRUE)) {
+      start_time[i] = extract_response(answer[i], "morning_0_datetime")
+    }
+    else if (grepl("flow_0_afternoon_0_quick_datetime", answer[i], fixed = TRUE)) {
+      start_time[i] = extract_response(answer[i], "flow_0_afternoon_0_quick_datetime")
+    }
+    else if (grepl("flow_0_evening_0_quick_datetime", answer[i], fixed = TRUE)) {
+      start_time[i] = extract_response(answer[i], "flow_0_evening_0_quick_datetime")
+    }
+    else if (grepl("start_mj_0_datetime", answer[i], fixed = TRUE)) {
+      start_time[i] = extract_response(answer[i], "start_mj_0_datetime")
+    }
+  }
+  return (start_time)
+}
+
+final$start_time <- extract_start_time(esms$question_answers, final$start_time)
+```
+
+```{r}
+# Cleaning up start_time (repeating dates, date format [YYYY-MM-DD HH:MM:SS],
+# timestamps that do not make sense)
+
+# clean_rep_dates(start_time): delete duplicating dates, if any
+clean_rep_dates <- function(start_time) {
+  for (i in 1:length(start_time)) {
+    str_list = unlist(strsplit(start_time[i], " "))
+    uniq_str_list = unique(str_list)
+    clean = paste(uniq_str_list, collapse = " ")
+  }
+  return (clean)
+}
+
+replace_rep_dates <- function(start_time) {
+  for (i in 1:length(start_time)) {
+    start_time[i] = clean_rep_dates(start_time[i])
+  }
+  return (start_time)
+}
+
+final$start_time <- replace_rep_dates(final$start_time)
+
+# !!Problem: two dates are reported for start_time sometimes; just leave as 
+# it is, because we're probably not using start_time
+```
+
+```{r}
+# extract_end_time(answer, end_time): find end time used marijuana
+## answer: column with participant's responses
+## end_time: empty column meant to be filled with end time used marijuana
+extract_end_time <- function(answer, end_time) {
+  for (i in 1:length(answer)) {
+    if (grepl("end_mj_0_datetime", answer[i], fixed = TRUE)) {
+      end_time[i] = extract_response(answer[i], "end_mj_0_datetime")
+    }
+  }
+  return (end_time)
+}
+
+final$end_time <- extract_end_time(esms$question_answers, final$end_time)
+```
+
+```{r}
+# extract_method(answer, method): find method of using marijuana
+## answer: column with participant's responses
+## method: empty column meant to be filled with method of using marijuana
+extract_method <- function(answer, method) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_1_checkbox", answer[i], fixed = TRUE)) {
+      method[i] = extract_response(answer[i], "morning_1_checkbox")
+    }
+    else if (grepl("flow_1_afternoon_0_quick_checkbox", answer[i], fixed = TRUE)) {
+      method[i] = extract_response(answer[i], "flow_1_afternoon_0_quick_checkbox")
+    }
+    else if (grepl("flow_1_evening_0_quick_checkbox", answer[i], fixed = TRUE)) {
+      method[i] = extract_response(answer[i], "flow_1_evening_0_quick_checkbox")
+    }
+    else if (grepl("end_mj_1_checkbox", answer[i], fixed = TRUE)) {
+      method[i] = extract_response(answer[i], "end_mj_1_checkbox")
+    }
+  }
+  return (method)
+}
+
+final$method <- extract_method(esms$question_answers, final$method)
+
+# clean_method(method): clean up formatting for method
+## method: column with method of using marijuana
+clean_method <- function(method) {
+  for (i in 1:length(method)) {
+    #doesn't end with ] and isn't empty string
+    if (!(substring(method[i], nchar(method[i])) == "]") && !(method[i] == "")) {
+      method[i] = paste(method[i], "]", sep = "")
+    }
+  }
+  return (method)
+}
+
+final$method <- clean_method(final$method)
+```
+
+```{r}
+# extract_amount(answer, amount): find amount of using marijuana
+## answer: column with participant's responses
+## amount: empty column meant to be filled with amount of using marijuana
+extract_amount <- function(answer, amount) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_2_checkbox", answer[i], fixed = TRUE)) {
+      amount[i] = extract_response(answer[i], "morning_2_checkbox")
+    }
+    else if (grepl("flow_2_afternoon_0_quick_number", answer[i], fixed = TRUE)) {
+      amount[i] = extract_response(answer[i], "flow_2_afternoon_0_quick_number")
+    }
+    else if (grepl("flow_2_evening_0_quick_number", answer[i], fixed = TRUE)) {
+      amount[i] = extract_response(answer[i], "flow_2_evening_0_quick_number")
+    }
+    else if (grepl("end_mj_2_number", answer[i], fixed = TRUE)) {
+      amount[i] = extract_response(answer[i], "end_mj_2_number")
+    }
+  }
+  return (amount)
+}
+
+final$amount <- extract_amount(esms$question_answers, final$amount)
+```
+
+```{r}
+# extract_unit(answer, unit): find unit of amount of marijuana used
+## answer: column with participant's responses
+## unit: empty column meant to be filled with unit of amount of marijuana used
+extract_unit <- function(answer, unit) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_2_number_unit", answer[i], fixed = TRUE)) {
+      unit[i] = extract_response(answer[i], "morning_2_number_unit")
+    }
+    else if (grepl("flow_2_afternoon_0_quick_number_units", answer[i], fixed = TRUE)) {
+      unit[i] = extract_response(answer[i], "flow_2_afternoon_0_quick_number_units")
+    }
+    else if (grepl("flow_2_evening_0_quick_number_unit", answer[i], fixed = TRUE)) {
+      unit[i] = extract_response(answer[i], "flow_2_evening_0_quick_number_unit")
+    }
+    else if (grepl("end_mj_2_number_unit", answer[i], fixed = TRUE)) {
+      unit[i] = extract_response(answer[i], "end_mj_2_number_unit")
+    }
+  }
+  return (unit)
+}
+
+final$unit <- extract_unit(esms$question_answers, final$unit)
+```
+
+```{r}
+# extract_craving(answer, craving): find amount of craving to smoke (0-10)
+## craving: empty column meant to be filled with amount of craving to smoke
+extract_craving <- function(answer, craving) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_3_slider", answer[i], fixed = TRUE)) {
+      craving[i] = extract_response(answer[i], "morning_3_slider")
+    }
+    else if (grepl("afternoon_1_slider", answer[i], fixed = TRUE)) {
+      craving[i] = extract_response(answer[i], "afternoon_1_slider")
+    }
+    else if (grepl("evening_1_slider", answer[i], fixed = TRUE)) {
+      craving[i] = extract_response(answer[i], "evening_1_slider")
+    }
+    else if (grepl("start_mj_2_slider", answer[i], fixed = TRUE)) {
+      craving[i] = extract_response(answer[i], "start_mj_2_slider")
+    }
+  }
+  return (craving)
+}
+
+final$craving <- extract_craving(esms$question_answers, final$craving)
+```
+
+```{r}
+# extract_how_high(answer, how_high): find how high the participant
+#                                             is feeling at that moment (0-10)
+## how_high: empty column meant to be filled with how high the participant is
+#            feeling at that moment
+extract_how_high <- function(answer, how_high) {
+  for (i in 1:length(answer)) {
+    if (grepl("start_mj_3_slider", answer[i], fixed = TRUE)) {
+      how_high[i] = extract_response(answer[i], "start_mj_3_slider")
+    }
+    else if (grepl("end_mj_11_slider", answer[i], fixed = TRUE)) {
+      how_high[i] = extract_response(answer[i], "end_mj_11_slider")
+    }
+  }
+  return (how_high)
+}
+
+final$how_high <- extract_how_high(esms$question_answers, final$how_high)
+```
+
+```{r}
+# extract_drinks(answer, drinks): find how many drinks of alcohol the
+#                                           participant had yesterday
+## drinks: empty column meant to be filled with number of drinks of alcohol
+extract_drinks <- function(answer, drinks) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_4_number", answer[i], fixed = TRUE)) {
+      drinks[i] = extract_response(answer[i], "morning_4_number")
+    }
+  }
+  return (drinks)
+}
+
+final$drinks <- extract_drinks(esms$question_answers, final$drinks)
+```
+
+```{r}
+# extract_cigarettes(answer, cigarettes): find how many cigarettes he
+#                                           participant had yesterday
+## cigarettes: empty column meant to be filled with number of cigarettes
+extract_cigarettes <- function(answer, cigarettes) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_5_number", answer[i], fixed = TRUE)) {
+      cigarettes[i] = extract_response(answer[i], "morning_5_number")
+    }
+  }
+  return (cigarettes)
+}
+
+final$cigarettes <- extract_cigarettes(esms$question_answers, final$cigarettes)
+```
+
+```{r}
+# extract_other_use(answer, other_use): find other substance
+#                                           (tobacco/drinking alcohol) usage
+## other_use: empty column meant to be filled with other substance usage
+extract_other_use <- function(answer, other_use) {
+  for (i in 1:length(answer)) {
+    if (grepl("flow_3_afternoon_0_quick_checkbox", answer[i], fixed = TRUE)) {
+      other_use[i] = extract_response(answer[i], "flow_3_afternoon_0_quick_checkbox")
+    }
+    if (grepl("flow_3_evening_0_quick_checkbox", answer[i], fixed = TRUE)) {
+      other_use[i] = extract_response(answer[i], "flow_3_evening_0_quick_checkbox")
+    }
+    if (grepl("end_mj_3_checkbox", answer[i], fixed = TRUE)) {
+      other_use[i] = extract_response(answer[i], "end_mj_3_checkbox")
+    }
+  }
+  return (other_use)
+}
+
+final$other_use <- extract_other_use(esms$question_answers, final$other_use)
+```
+
+```{r}
+# extract_reason(answer, reason): find reason behind smoking
+## reason: empty column meant to be filled with reason behind smoking
+extract_reason <- function(answer, reason) {
+  for (i in 1:length(answer)) {
+    if (grepl("end_mj_4_checkbox", answer[i], fixed = TRUE)) {
+      reason[i] = extract_response(answer[i], "end_mj_4_checkbox")
+    }
+  }
+  return (reason)
+}
+
+final$reason <- extract_reason(esms$question_answers, final$reason)
+```
+
+```{r}
+# extract_place(answer, place): find place smoked
+## place: empty column meant to be filled with place smoked
+extract_place <- function(answer, place) {
+  for (i in 1:length(answer)) {
+    if (grepl("end_mj_5_checkbox", answer[i], fixed = TRUE)) {
+      place[i] = extract_response(answer[i], "end_mj_5_checkbox")
+    }
+  }
+  return (place)
+}
+
+final$place <- extract_place(esms$question_answers, final$place)
+```
+
+```{r}
+# extract_alone(answer, alone): find place smoked
+## alone: empty column meant to be filled with whether participant smoked alone
+extract_alone <- function(answer, alone) {
+  for (i in 1:length(answer)) {
+    if (grepl("start_mj_4_checkbox", answer[i], fixed = TRUE)) {
+      alone[i] = extract_response(answer[i], "start_mj_4_checkbox")
+    }
+  }
+  return (alone)
+}
+
+final$alone <- extract_alone(esms$question_answers, final$alone)
+```
+
+```{r}
+# extract_relaxed(answer, relaxed): find whether participant is relaxed
+## relaxed: empty column meant to be filled with whether participant is relaxed
+extract_relaxed <- function(answer, relaxed) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_6_slider", answer[i], fixed = TRUE)) {
+      relaxed[i] = extract_response(answer[i], "morning_6_slider")
+    }
+    if (grepl("afternoon_2_slider", answer[i], fixed = TRUE)) {
+      relaxed[i] = extract_response(answer[i], "afternoon_2_slider")
+    }
+    if (grepl("evening_2_slider", answer[i], fixed = TRUE)) {
+      relaxed[i] = extract_response(answer[i], "evening_2_slider")
+    }
+    if (grepl("end_mj_6_slider", answer[i], fixed = TRUE)) {
+      relaxed[i] = extract_response(answer[i], "end_mj_6_slider")
+    }
+  }
+  return (relaxed)
+}
+
+final$relaxed <- extract_relaxed(esms$question_answers, final$relaxed)
+```
+
+```{r}
+# extract_sluggish(answer, sluggish): find whether participant is sluggish
+## relaxed: empty column meant to be filled with whether participant is sluggish
+extract_sluggish <- function(answer, sluggish) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_7_slider", answer[i], fixed = TRUE)) {
+      sluggish[i] = extract_response(answer[i], "morning_7_slider")
+    }
+    if (grepl("afternoon_3_slider", answer[i], fixed = TRUE)) {
+      sluggish[i] = extract_response(answer[i], "afternoon_3_slider")
+    }
+    if (grepl("evening_3_slider", answer[i], fixed = TRUE)) {
+      sluggish[i] = extract_response(answer[i], "evening_3_slider")
+    }
+    if (grepl("end_mj_7_slider", answer[i], fixed = TRUE)) {
+      sluggish[i] = extract_response(answer[i], "end_mj_7_slider")
+    }
+  }
+  return (sluggish)
+}
+
+final$sluggish <- extract_sluggish(esms$question_answers, final$sluggish)
+```
+
+```{r}
+# extract_foggy(answer, foggy): find whether participant is having
+#                                             foggy thinking
+## foggy: empty column meant to be filled with whether participant is having
+#         foggy thinking
+extract_foggy <- function(answer, foggy) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_8_slider", answer[i], fixed = TRUE)) {
+      foggy[i] = extract_response(answer[i], "morning_8_slider")
+    }
+    if (grepl("afternoon_4_slider", answer[i], fixed = TRUE)) {
+      foggy[i] = extract_response(answer[i], "afternoon_4_slider")
+    }
+    if (grepl("evening_4_slider", answer[i], fixed = TRUE)) {
+      foggy[i] = extract_response(answer[i], "evening_4_slider")
+    }
+    if (grepl("end_mj_8_slider", answer[i], fixed = TRUE)) {
+      foggy[i] = extract_response(answer[i], "end_mj_8_slider")
+    }
+  }
+  return (foggy)
+}
+
+final$foggy <- extract_foggy(esms$question_answers, final$foggy)
+```
+
+```{r}
+# extract_anxious(answer, anxious): find whether participant is anxious
+## anxious: empty column meant to be filled with whether participant is anxious
+extract_anxious <- function(answer, anxious) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_9_slider", answer[i], fixed = TRUE)) {
+      anxious[i] = extract_response(answer[i], "morning_9_slider")
+    }
+    if (grepl("afternoon_5_slider", answer[i], fixed = TRUE)) {
+      anxious[i] = extract_response(answer[i], "afternoon_5_slider")
+    }
+    if (grepl("evening_5_slider", answer[i], fixed = TRUE)) {
+      anxious[i] = extract_response(answer[i], "evening_5_slider")
+    }
+    if (grepl("end_mj_9_slider", answer[i], fixed = TRUE)) {
+      anxious[i] = extract_response(answer[i], "end_mj_9_slider")
+    }
+  }
+  return (anxious)
+}
+
+final$anxious <- extract_anxious(esms$question_answers, final$anxious)
+```
+
+```{r}
+# extract_sad(answer, sad): find whether participant is sad
+## sad: empty column meant to be filled with whether participant is sad
+extract_sad <- function(answer, sad) {
+  for (i in 1:length(answer)) {
+    if (grepl("morning_10_slider", answer[i], fixed = TRUE)) {
+      sad[i] = extract_response(answer[i], "morning_10_slider")
+    }
+    if (grepl("afternoon_6_slider", answer[i], fixed = TRUE)) {
+      sad[i] = extract_response(answer[i], "afternoon_6_slider")
+    }
+    if (grepl("evening_6_slider", answer[i], fixed = TRUE)) {
+      sad[i] = extract_response(answer[i], "evening_6_slider")
+    }
+    if (grepl("end_mj_10_slider", answer[i], fixed = TRUE)) {
+      sad[i] = extract_response(answer[i], "end_mj_10_slider")
+    }
+  }
+  return (sad)
+}
+
+final$sad <- extract_sad(esms$question_answers, final$sad)
+```
+
+```{r}
+# extract_solving(answer, sad): find whether participant is having
+#                           difficulty solving problems or learning new things
+## solving: empty column meant to be filled with whether participant can solve/learn
+extract_solving <- function(answer, solving) {
+  for (i in 1:length(answer)) {
+    if (grepl("evening_7_slider", answer[i], fixed = TRUE)) {
+      solving[i] = extract_response(answer[i], "evening_7_slider")
+    }
+  }
+  return (solving)
+}
+
+final$solving <- extract_solving(esms$question_answers, final$solving)
+```
+
+```{r}
+# extract_remembering(answer, remembering): find whether participant is
+#             having difficulty remembering things, like where you put things
+## remembering: empty column meant to be filled with whether participant can remember
+extract_remembering <- function(answer, remembering) {
+  for (i in 1:length(answer)) {
+    if (grepl("evening_8_slider", answer[i], fixed = TRUE)) {
+      remembering[i] = extract_response(answer[i], "evening_8_slider")
+    }
+  }
+  return (remembering)
+}
+
+final$remembering <- extract_remembering(esms$question_answers, final$remembering)
+```
+
+```{r}
+# extract_attention(answer, attention): find whether participant can
+#                                       keep attention on an activity for long
+## attention: empty column meant to be filled with whether participant can keep attention
+extract_attention <- function(answer, attention) {
+  for (i in 1:length(answer)) {
+    if (grepl("evening_9_slider", answer[i], fixed = TRUE)) {
+      attention[i] = extract_response(answer[i], "evening_9_slider")
+    }
+  }
+  return (attention)
+}
+
+final$attention <- extract_attention(esms$question_answers, final$attention)
+```
+
+```{r}
+# extract_concentrating(answer, attention): find whether participant
+#                                             can concentrate and think clearly
+## concentrating: empty column meant to be filled with whether participant can
+#                  concentrate/think clearly
+extract_concentrating <- function(answer, concentrating) {
+  for (i in 1:length(answer)) {
+    if (grepl("evening_10_slider", answer[i], fixed = TRUE)) {
+      concentrating[i] = extract_response(answer[i], "evening_10_slider")
+    }
+  }
+  return (concentrating)
+}
+
+final$concentrating <- extract_concentrating(esms$question_answers, final$concentrating)
+```
+
+```{r}
+final$device_id = substr(final$device_id, 1, 8)
+final$amount = as.character(final$amount)
+and_final <- final
+```

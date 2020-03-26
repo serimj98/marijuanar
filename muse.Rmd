@@ -1,0 +1,497 @@
+---
+title: "muse.Rmd"
+author: "Serim Jang (serimj)"
+date: "5/14/2019"
+output: pdf_document
+---
+
+```{r}
+stroop <- read.csv("stroop_interactions.csv", header = TRUE)
+```
+
+```{r}
+# Getting rid of unnecessary columns
+
+## Participant.ID: participant's MUSE ID
+## Response.Time: time it took for participant to complete one task in a set
+## Expected.Color.Name: task actual answer
+## Actual.Color.Name: participant's answer
+## Engagement.Start: time the set begins
+## Word.Category: neutral/marijuana-related words
+## Interaction.Number: task number within the set
+
+stroop <- subset(stroop, select=c(Engagement.ID, Participant.ID, Response.Time, 
+                                  Expected.Color.Name, Actual.Color.Name,
+                                  Engagement.Start, Word.Category, Interaction.Number))
+```
+
+```{r}
+# Adding column to check whether the participant got the answer correct
+
+# add_correct(expected, actual, correct): adding `Correct` column comparing
+#                               `Expected.Color.Name` and `Actual.Color.Name`
+## expected: column with task actual answer
+## actual: column with participant's answer
+## correct: empty column meant to be filled with whether answer is correct
+add_correct <- function(expected, actual, correct) {
+  for (i in 1:length(expected)) {
+    if (expected[i] == actual[i]) {
+      correct[i] = TRUE
+    }
+    else {
+      correct[i] = FALSE
+    }
+  }
+  return (correct)
+}
+
+stroop$correct <- add_correct(stroop$Expected.Color.Name, stroop$Actual.Color.Name,
+                              stroop$correct)
+
+stroop <- subset(stroop, select=c(Engagement.ID, Participant.ID, Response.Time, correct,
+                                  Engagement.Start, Word.Category, Interaction.Number))
+```
+
+```{r}
+stroop_new <- setNames(data.frame(matrix(ncol = length(colnames(stroop))+1,
+                                         nrow = 0)), c(colnames(stroop), "Scoring"))
+
+# Adding column of four different word categories (N-N, N-MJ, MJ-N, MJ-MJ)
+for (i in 1:length(unique(stroop$Engagement.Start))) {
+  df <- subset(stroop, Engagement.Start == unique(stroop$Engagement.Start)[i])
+  for (j in 1:nrow(df)) {
+    if (j == 1) {
+      if (df$Word.Category[j] == "neutral") {
+        df$Scoring[j] = "N-N"
+      }
+      else if (df$Word.Category[j] == "marijuana") {
+        df$Scoring[j] = "N-M"
+      }
+    }
+    else {
+      if (df$Word.Category[j] == "neutral") {
+        if (df$Word.Category[j-1] == "neutral") {
+          df$Scoring[j] = "N-N"
+        }
+        else if (df$Word.Category[j-1] == "marijuana") {
+          df$Scoring[j] = "M-N"
+        }
+      }
+      else if (df$Word.Category[j] == "marijuana") {
+        if (df$Word.Category[j-1] == "neutral") {
+          df$Scoring[j] = "N-M"
+        }
+        else if (df$Word.Category[j-1] == "marijuana") {
+          df$Scoring[j] = "M-M"
+        }
+      }
+    }
+  }
+  stroop_new <- bind_rows(stroop_new, df)
+  
+}
+
+stroop <- stroop_new
+```
+
+```{r}
+stroop$neut_rt <- NA
+stroop$mj_rt <- NA
+stroop$NN_rt <- NA
+stroop$NM_rt <- NA
+stroop$MN_rt <- NA
+stroop$MM_rt <- NA
+
+stroop$neut_cor <- NA
+stroop$mj_cor <- NA
+stroop$NN_cor <- NA
+stroop$NM_cor <- NA
+stroop$MN_cor <- NA
+stroop$MM_cor <- NA
+
+for (i in 1:nrow(stroop)) {
+  if (stroop$Word.Category[i] == "neutral") {
+    stroop$neut_rt[i] = stroop$Response.Time[i]
+    stroop$neut_cor[i] = stroop$correct[i]
+  }
+  else if (stroop$Word.Category[i] == "marijuana") {
+    stroop$mj_rt[i] = stroop$Response.Time[i]
+    stroop$mj_cor[i] = stroop$correct[i]
+  }
+  if (stroop$Scoring[i] == "N-N") {
+    stroop$NN_rt[i] = stroop$Response.Time[i]
+    stroop$NN_cor[i] = stroop$correct[i]
+  }
+  if (stroop$Scoring[i] == "N-M") {
+    stroop$NM_rt[i] = stroop$Response.Time[i]
+    stroop$NM_cor[i] = stroop$correct[i]
+  }
+  if (stroop$Scoring[i] == "M-N") {
+    stroop$MN_rt[i] = stroop$Response.Time[i]
+    stroop$MN_cor[i] = stroop$correct[i]
+  }
+  if (stroop$Scoring[i] == "M-M") {
+    stroop$MM_rt[i] = stroop$Response.Time[i]
+    stroop$MM_cor[i] = stroop$correct[i]
+  }
+}
+```
+
+```{r}
+# Collapsing rows by timestamp
+
+stroop <-
+  stroop %>% group_by(Engagement.Start) %>%
+         dplyr::summarise(eng = Engagement.ID[1], id = Participant.ID[1],
+         S_num_cor = sum(correct == TRUE), S_num_incor = sum(correct == FALSE),
+         S_perc_cor = S_num_cor / (S_num_cor + S_num_incor),
+         S_avg_response = mean(Response.Time, na.rm = TRUE),
+         S_sd_response = sd(Response.Time, na.rm = TRUE),
+         S_max_response = max(Response.Time, na.rm = TRUE),
+         S_min_response = min(Response.Time, na.rm = TRUE),
+         S_M_num_cor = sum(mj_cor, na.rm = TRUE),
+         S_M_num_incor = sum(!is.na(mj_cor)) - sum(mj_cor, na.rm = TRUE),
+         S_M_avg_response = mean(mj_rt, na.rm = TRUE),
+         S_N_num_cor = sum(neut_cor, na.rm = TRUE),
+         S_N_num_incor = sum(!is.na(neut_cor)) - sum(neut_cor, na.rm = TRUE),
+         S_N_avg_response = mean(neut_rt, na.rm = TRUE),
+         S_NN_num_cor = sum(NN_cor, na.rm = TRUE),
+         S_NN_num_incor = sum(!is.na(NN_cor)) - sum(NN_cor, na.rm = TRUE),
+         S_NN_avg_response = mean(NN_rt, na.rm = TRUE),
+         S_NM_num_cor = sum(NM_cor, na.rm = TRUE),
+         S_NM_num_incor = sum(!is.na(NM_cor)) - sum(NM_cor, na.rm = TRUE),
+         S_NM_avg_response = mean(NM_rt, na.rm = TRUE),
+         S_MN_num_cor = sum(MN_cor, na.rm = TRUE),
+         S_MN_num_incor = sum(!is.na(MN_cor)) - sum(MN_cor, na.rm = TRUE),
+         S_MN_avg_response = mean(MN_rt, na.rm = TRUE),
+         S_MM_num_cor = sum(MM_cor, na.rm = TRUE),
+         S_MM_num_incor = sum(!is.na(MM_cor)) - sum(MM_cor, na.rm = TRUE),
+         S_MM_avg_response = mean(MM_rt, na.rm = TRUE)
+  )
+```
+
+```{r}
+# Cleaning up dataframe
+
+stroop$Engagement.Start <- substr(stroop$Engagement.Start, 1, 19)
+
+# keep_finite(column): keep only the finite values in a column
+keep_finite <- function(column) {
+  for (i in 1:length(column)) {
+    if (is.infinite(column[i])) {
+      column[i] = NA
+    }
+    if (is.nan(column[i])) {
+      column[i] = NA
+    }
+  }
+  return (column)
+}
+
+stroop$S_perc_cor <- keep_finite(stroop$S_perc_cor)
+stroop$S_avg_response <- keep_finite(stroop$S_avg_response)
+stroop$S_sd_response <- keep_finite(stroop$S_sd_response)
+stroop$S_max_response <- keep_finite(stroop$S_max_response)
+stroop$S_min_response <- keep_finite(stroop$S_min_response)
+stroop$S_M_avg_response <- keep_finite(stroop$S_M_avg_response)
+stroop$S_N_avg_response <- keep_finite(stroop$S_N_avg_response)
+stroop$S_NN_avg_response <- keep_finite(stroop$S_NN_avg_response)
+stroop$S_NM_avg_response <- keep_finite(stroop$S_NM_avg_response)
+stroop$S_MN_avg_response <- keep_finite(stroop$S_MN_avg_response)
+stroop$S_MM_avg_response <- keep_finite(stroop$S_MM_avg_response)
+```
+
+```{r}
+dsst <- read.csv("dsst_interactions.csv", header = TRUE)
+```
+
+```{r}
+# Getting rid of unnecessary columns
+
+## Participant.ID: participant's MUSE ID
+## Response.Time: time it took for participant to complete one task in a set
+## Correct: whether answer is correct
+## Engagement.Start: time the set begins
+
+dsst <- subset(dsst, select=c(Engagement.ID, Participant.ID, Response.Time,
+                              Correct, Engagement.Start))
+
+dsst$Correct = as.character(dsst$Correct)
+```
+
+```{r}
+# Exclusions based on cutoff
+dsst <- subset(dsst, Response.Time >= 100 | is.na(Response.Time))
+dsst <- subset(dsst, Response.Time <= 2550.27 | is.na(Response.Time))
+```
+
+```{r}
+# Collapsing rows by timestamp
+
+dsst <-
+  dsst %>% group_by(Engagement.Start) %>% summarise(id = Participant.ID[1],
+         D_num_cor = sum(Correct == "true"), D_num_incor = sum(Correct == "false"),
+         D_perc_cor = D_num_cor / (D_num_cor + D_num_incor),
+         D_avg_response = mean(Response.Time, na.rm = TRUE),
+         D_sd_response = sd(Response.Time, na.rm = TRUE),
+         D_max_response = max(Response.Time, na.rm = TRUE),
+         D_min_response = min(Response.Time, na.rm = TRUE))
+```
+
+```{r}
+# Cleaning up dataframe
+
+dsst$Engagement.Start <- substr(dsst$Engagement.Start, 1, 19)
+
+dsst$D_perc_cor <- keep_finite(dsst$D_perc_cor)
+dsst$D_avg_response <- keep_finite(dsst$D_avg_response)
+dsst$D_sd_response <- keep_finite(dsst$D_sd_response)
+dsst$D_max_response <- keep_finite(dsst$D_max_response)
+dsst$D_min_response <- keep_finite(dsst$D_min_response)
+```
+
+```{r}
+flowers <- read.csv("flowers_interactions.csv", header = TRUE)
+```
+
+```{r}
+# Getting rid of unnecessary columns
+
+## Participant.ID: participant's MUSE ID
+## Correct: whether answer is correct
+## Engagement.Start: time the set begins
+## Complexity: how many flowers you have to tap in the task
+## Flowers.Tapped: how many flowers participant actually tapped
+## Tap.Times: timestamp corresponding to each time user taps flower
+
+flowers <- subset(flowers, select=c(Engagement.ID, Participant.ID, Correct,
+                                    Engagement.Start, Complexity,
+                                    Flowers.Tapped, Tap.Times))
+
+flowers$Correct = as.character(flowers$Correct)
+flowers$Tap.Times = as.character(flowers$Tap.Times)
+```
+
+```{r}
+# Parsing through `Tap.Times` column
+
+# extract_datetime(time_str): extract only the date and time in a list of strings
+## time_str: string of timestamp corresponding to each time user taps flower
+## UNUSED ##
+extract_datetime <- function(time_str) {
+  str_list <- unlist(strsplit(time_str, "\\Z"))
+  str_list <- gsub("T", " ", str_list)
+  for (i in 1:length(str_list)) {
+    if (grepl(";", str_list[i], fixed = TRUE)) {
+      str_list[i] = gsub(";", "", str_list)
+    }
+  }
+  return (str_list)
+}
+
+# extract_time(time_str): extract only the time in a list of strings
+## time_str: string of timestamp corresponding to each time user taps flower
+extract_time <- function(time_str) {
+  time_str <- as.character(time_str)
+  str_list <- unlist(strsplit(time_str, "\\Z"))
+  str_list <- gsub(".*T", "", str_list)
+  return (str_list)
+}
+
+# to_milli(timestamp): convert H/M/S/MS of timestamp string into milliseconds
+## str_list: vector of strings of time (ex. 21:51:35.730)
+to_milli <- function(str_list) {
+  milli_list <- vector()
+  for (i in 1:length(str_list)) {
+    timestamp_list <- unlist(strsplit(str_list[i], "\\:"))
+    timestamp_list <- as.character(timestamp_list)
+    timestamp_list <- unlist(strsplit(timestamp_list, "\\."))
+    milli <- as.numeric(timestamp_list[1])*3600000 +
+            as.numeric(timestamp_list[2])*60000 +
+            as.numeric(timestamp_list[3])*1000 +
+            as.numeric(timestamp_list[4])
+    milli_list <- append(milli_list, milli)
+  }
+  return (milli_list)
+}
+
+# find_diff(str_list): find difference in extracted time
+## milli_list: vector of strings of time (ex. 21:51:35.730)
+find_diff <- function(milli_list) {
+  diff_list <- vector()
+  for (i in 1:length(milli_list)-1) {
+    diff <- milli_list[i+1] - milli_list[i]
+    diff_list <- append(diff_list, diff)
+  }
+  return (diff_list)
+}
+```
+
+```{r, warning = FALSE}
+# Getting average of one sequence of flowers
+
+# get_seq_avg(tap.times, seq_avg): getting sequence average
+## tap.times: column with timestamp corresponding to each time user taps flower
+## seq_avg: empty column meant to be filled with sequence average
+get_seq_avg <- function(tap.times, seq_avg) {
+  for (i in 1:length(tap.times)) {
+    str_list <- extract_time(tap.times[i])
+    milli_list <- to_milli(str_list)
+    diff_list <- find_diff(milli_list)
+    seq_avg[i] <- mean(diff_list)
+  }
+  return (seq_avg)
+}
+
+flowers$seq_avg <- get_seq_avg(flowers$Tap.Times, flowers$seq_avg)
+flowers$seq_avg <- keep_finite(flowers$seq_avg)
+```
+
+```{r, warning = FALSE}
+# Getting standard deviation of one sequence of flowers
+
+# get_seq_sd(tap.times, seq_sd): getting sequence standard deviation
+## tap.times: column with timestamp corresponding to each time user taps flower
+## seq_sd: empty column meant to be filled with sequence standard deviation
+get_seq_sd <- function(tap.times, seq_sd) {
+  for (i in 1:length(tap.times)) {
+    str_list <- extract_time(tap.times[i])
+    milli_list <- to_milli(str_list)
+    diff_list <- find_diff(milli_list)
+    seq_sd[i] <- sd(diff_list)
+  }
+  return (seq_sd)
+}
+
+flowers$seq_sd <- get_seq_sd(flowers$Tap.Times, flowers$seq_sd)
+flowers$seq_sd <- keep_finite(flowers$seq_sd)
+```
+
+```{r, warning = FALSE}
+# Getting maximum of one sequence of flowers
+
+# get_seq_max(tap.times, seq_max): getting sequence maximum
+## tap.times: column with timestamp corresponding to each time user taps flower
+## seq_max: empty column meant to be filled with sequence maximum
+get_seq_max <- function(tap.times, seq_max) {
+  for (i in 1:length(tap.times)) {
+    str_list <- extract_time(tap.times[i])
+    milli_list <- to_milli(str_list)
+    diff_list <- find_diff(milli_list)
+    seq_max[i] <- max(diff_list)
+  }
+  return (seq_max)
+}
+
+flowers$seq_max <- get_seq_max(flowers$Tap.Times, flowers$seq_max)
+flowers$seq_max <- keep_finite(flowers$seq_max)
+```
+
+```{r, warning = FALSE}
+# Getting minimum of one sequence of flowers
+
+# get_seq_min(tap.times, seq_min): getting sequence minimum
+## tap.times: column with timestamp corresponding to each time user taps flower
+## seq_min: empty column meant to be filled with sequence minimum
+get_seq_min <- function(tap.times, seq_min) {
+  for (i in 1:length(tap.times)) {
+    str_list <- extract_time(tap.times[i])
+    milli_list <- to_milli(str_list)
+    diff_list <- find_diff(milli_list)
+    seq_min[i] <- min(diff_list)
+  }
+  return (seq_min)
+}
+
+flowers$seq_min <- get_seq_min(flowers$Tap.Times, flowers$seq_min)
+flowers$seq_min <- keep_finite(flowers$seq_min)
+```
+
+```{r}
+# Exclusions based on cutoff
+flowers <- subset(flowers, seq_avg >= 100 | is.na(seq_avg))
+flowers <- subset(flowers, seq_avg <= 683.32 | is.na(seq_avg))
+```
+
+```{r}
+# Collapsing rows by timestamp
+
+flowers <-
+  flowers %>% group_by(Engagement.Start) %>% summarise(id = Participant.ID[1],
+         F_num_cor = sum(Correct == "true"), F_num_incor = sum(Correct == "false"),
+         F_perc_cor = F_num_cor / (F_num_cor + F_num_incor),
+         F_total_response = sum(seq_avg, na.rm = TRUE),
+         F_avg_response = mean(seq_avg, na.rm = TRUE),
+         F_sd_response = sd(seq_avg, na.rm = TRUE),
+         F_max_response = max(seq_avg, na.rm = TRUE),
+         F_min_response = min(seq_avg, na.rm = TRUE))
+
+         #F_s1_avg = seq_avg[1], F_s1_sd = seq_sd[1],
+         #F_s1_max = seq_max[1], F_s1_min = seq_min[1],
+         #F_s2_avg = seq_avg[2], F_s2_sd = seq_sd[2],
+         #F_s2_max = seq_max[2], F_s2_min = seq_min[2],
+         #F_s3_avg = seq_avg[3], F_s3_sd = seq_sd[3],
+         #F_s3_max = seq_max[3], F_s3_min = seq_min[3],
+         #F_s4_avg = seq_avg[4], F_s4_sd = seq_sd[4],
+         #F_s4_max = seq_max[4], F_s4_min = seq_min[4],
+         #F_s5_avg = seq_avg[5], F_s5_sd = seq_sd[5],
+         #F_s5_max = seq_max[5], F_s5_min = seq_min[5],
+         #F_s6_avg = seq_avg[6], F_s5_sd = seq_sd[6],
+         #F_s6_max = seq_max[6], F_s5_min = seq_min[6],
+```
+
+```{r}
+# Cleaning up dataframe
+
+flowers$Engagement.Start <- substr(flowers$Engagement.Start, 1, 19)
+
+flowers$F_perc_cor <- keep_finite(flowers$F_perc_cor)
+flowers$F_avg_response <- keep_finite(flowers$F_avg_response)
+flowers$F_sd_response <- keep_finite(flowers$F_sd_response)
+flowers$F_max_response <- keep_finite(flowers$F_max_response)
+flowers$F_min_response <- keep_finite(flowers$F_min_response)
+```
+
+```{r}
+# Merge three MUSE tasks together by `Engagement.Start` and `id`
+
+muse <- merge(stroop, dsst, by = c("Engagement.Start", "id"))
+muse <- merge(muse, flowers, by = c("Engagement.Start", "id"))
+colnames(muse)[colnames(muse)=="Engagement.Start"] <- "timestamp"
+muse$timestamp <- as.character(muse$timestamp)
+```
+
+```{r}
+muse <- muse[-c(1:63),]
+```
+
+```{r}
+engagements <- read.csv("R_muse_engagements.csv", header = TRUE)
+
+engagements$How.many.times.were.you.distracted.during.completion.of.the.tasks. <-
+  as.character(engagements$How.many.times.were.you.distracted.during.completion.of.the.tasks.)
+engagements$Where.did.you.complete.the.tasks. <-
+  as.character(engagements$Where.did.you.complete.the.tasks.)
+engagements$How.much.effort.did.you.put.into.completing.the.tasks. <-
+  as.character(engagements$How.much.effort.did.you.put.into.completing.the.tasks.)
+```
+
+```{r}
+muse$distracted <- NA
+muse$location <- NA
+muse$effort <- NA
+
+for (i in 1:nrow(muse)) {
+  for (j in 1:nrow(engagements)) {
+    if (muse$eng[i] == engagements$Engagement.ID[j]) {
+      muse$distracted[i] <-
+        engagements$How.many.times.were.you.distracted.during.completion.of.the.tasks.[j]
+      muse$location[i] <-
+        engagements$Where.did.you.complete.the.tasks.[j]
+      muse$effort[i] <-
+        engagements$How.much.effort.did.you.put.into.completing.the.tasks.[j]
+      break
+    }
+  }
+}
+```

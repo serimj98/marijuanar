@@ -1,0 +1,793 @@
+---
+title: "esm_muse_integ.Rmd"
+author: "Serim Jang (serimj)"
+date: "6/24/2019"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r, message = FALSE}
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(lubridate)
+library(scales)
+library(stringi)
+library(stringr)
+library(DT)
+library(pastecs)
+library(tidyr)
+library(ggpubr)
+
+opts_chunk$set(cache=TRUE, autodep=TRUE, cache.comments=FALSE,
+               message=FALSE, warning=FALSE, echo=FALSE,
+               fig.height = 3.5, fig.width = 5.5, fig.align = "center")
+```
+
+```{r, message = FALSE, warning = FALSE}
+#ios_final <- read.csv("P_ios_esms_final.csv", header = TRUE)
+ios_final <- read.csv("P_ios_esms_final_new.csv", header = TRUE)
+and_final <- read.csv("P_and_esms_final.csv", header = TRUE)
+
+# Matching type of each column in order to bind rows
+ios_final$amount <- as.numeric(as.character(ios_final$amount))
+ios_final$cigarettes <- as.numeric(as.character(ios_final$cigarettes))
+ios_final$start_time <- as.POSIXct(ios_final$start_time, format="%Y-%m-%d %H:%M:%S")
+ios_final$end_time <- as.POSIXct(ios_final$end_time, format="%Y-%m-%d %H:%M:%S")
+and_final$start_time <- as.POSIXct(and_final$start_time, format="%m-%d-%Y %H:%M")
+and_final$end_time <- as.POSIXct(and_final$end_time, format="%m-%d-%Y %H:%M")
+
+# Combine iOS and Android ESM together
+final <- bind_rows(ios_final, and_final)
+muse <- read.csv("P_muse_final.csv", header = TRUE)
+```
+
+```{r}
+mj_id <- read.csv("mj_id.csv", header = TRUE)
+mj_id$device_id = as.character(mj_id$device_id)
+
+# Clean up data to include only participant device IDs and MUSE IDs
+final <- final[(final$device_id %in%
+                  stri_remove_empty(as.character(mj_id$device_id))),]
+
+muse <- muse[(muse$id %in%
+                stri_remove_empty(as.character(mj_id$muse_id))),]
+```
+
+```{r}
+# match_id(final, mj_id): add `id` column to final to match with the MUSE ID
+#                         in that particular row
+## final: dataframe of ESM
+## mj_id: dataframe with matching device ID and MUSE ID
+match_id <- function(final, mj_id) {
+  for (i in 1:nrow(final)) {
+    for (j in 1:nrow(mj_id)) {
+      if (final$device_id[i] == mj_id$device_id[j]) {
+        final$id[i] = mj_id$muse_id[j]
+      }
+    }
+  }
+  return (final)
+}
+
+final <- match_id(final, mj_id)
+```
+
+```{r}
+# Converting to data table in order to compare timestamps as POSIXct values
+
+final <- data.table(final)
+muse <- data.table(muse)
+final$timestamp <- as.POSIXct(final$timestamp)
+muse$timestamp <- as.POSIXct(muse$timestamp)
+
+setkey(final, timestamp)
+setkey(muse, timestamp)
+
+# Matching MUSE data points to the nearest timestamp for ESM
+
+integ <- setNames(data.frame(matrix(ncol = length(colnames(muse[final])),
+                                         nrow = 0)), colnames(muse[final]))
+
+for (i in 1:length(unique(muse$id))) {
+  muse_sub <- subset(muse, id == unique(muse$id)[i])
+  final_sub <- subset(final, id == unique(muse$id)[i])
+  df <- muse_sub[final_sub, roll = "nearest"]
+  integ <- bind_rows(integ, df)
+}
+```
+
+```{r}
+# Removing unnecessary columns
+integ <- subset(integ, select = -c(X, i.id, i.timestamp, i.X))
+
+# Removing strange values from the server
+integ <- subset(integ, !(as.character(timestamp) == "2019-03-20 08:44:33")) #how_high = 52
+integ <- subset(integ, !(as.character(timestamp) == "2019-03-25 00:10:05")) #survey_type = NA
+integ <- subset(integ, S_num_cor <= 28)
+```
+
+```{r}
+# Labeling epoch times - morning, afternoon, evening, night
+for (i in 1:nrow(integ)) {
+  if (as.ITime(integ$timestamp[i]) %between%
+      as.ITime(c("06:00:00", "12:00:00"))) {
+    integ$epoch[i] = "morning"
+  }
+  else if (as.ITime(integ$timestamp[i]) %between%
+      as.ITime(c("12:00:00", "18:00:00"))) {
+    integ$epoch[i] = "afternoon"
+  }
+  else if (as.ITime(integ$timestamp[i]) %between%
+      as.ITime(c("18:00:00", "23:59:59"))) {
+    integ$epoch[i] = "evening"
+  }
+  else if (as.ITime(integ$timestamp[i]) %between%
+      as.ITime(c("00:00:00", "06:00:00"))) {
+    integ$epoch[i] = "night"
+  }
+}
+
+integ$epoch <- factor(integ$epoch, levels=c("morning", "afternoon", "evening", "night"))
+```
+
+```{r}
+# label_status(integ, status): create new column with whether the data point
+#                               belongs to high, non_high, or na_high
+## integ: dataframe of integrated ESM and MUSE data
+## status: empty column meant to be filled with participant status
+label_status <- function(integ, status) {
+  for (i in 1:nrow(integ)) {
+    if (is.na(integ$how_high[i])) {
+      status[i] = "na_high"
+    }
+    else if (integ$how_high[i] > 0) {
+      status[i] = "high"
+    }
+    else if (integ$how_high[i] == 0) {
+      status[i] = "non_high"
+    }
+  }
+  return (status)
+}
+
+label_status2 <- function(integ, status2) {
+  for (i in 1:nrow(integ)) {
+    if (is.na(integ$how_high[i])) {
+      status2[i] = "non_high"
+    }
+    else if (integ$how_high[i] > 0) {
+      status2[i] = "high"
+    }
+    else if (integ$how_high[i] == 0) {
+      status2[i] = "non_high"
+    }
+  }
+  return (status2)
+}
+
+label_status3 <- function(integ, status3) {
+  for (i in 1:nrow(integ)) {
+    if (is.na(integ$craving[i])) {
+      status3[i] = NA
+    }
+    else if (integ$craving[i] > 0) {
+      status3[i] = "craving"
+    }
+    else if (integ$craving[i] == 0) {
+      status3[i] = "non_craving"
+    }
+  }
+  return (status3)
+}
+
+integ$status <- label_status(integ, integ$status)
+integ$status2 <- label_status2(integ, integ$status2)
+integ$status3 <- label_status3(integ, integ$status3)
+```
+
+```{r}
+# Difference in `start_time` and start survey timestamp
+for (i in 1:nrow(integ)) {
+  for (j in i+1:nrow(integ)) {
+    if (integ$survey_type[i] == "start") {
+      if (!is.na(integ$survey_type[j]) & integ$survey_type[j] == "end") {
+        integ$end_time[i] = integ$end_time[j]
+        break
+      }
+    }
+  }
+}
+
+for (i in 1:nrow(integ)) {
+  for (j in i:1) {
+    if (integ$survey_type[i] == "end") {
+      if (integ$survey_type[j] == "start") {
+        integ$start_time[i] = integ$start_time[j]
+        break
+      }
+    }
+  }
+}
+```
+
+```{r}
+# Add L/M/H high status column
+integ$high_status <- NA
+for (i in 1:nrow(integ)) {
+  if (is.na(integ$how_high[i]) | integ$how_high[i] == 0) {
+    integ$high_status[i] = "N"
+  }
+  else if (integ$how_high[i] >= 1 & integ$how_high[i] <= 3
+      & !is.na(integ$how_high[i])) {
+    integ$high_status[i] = "L"
+  }
+  else if (integ$how_high[i] >= 4 & integ$how_high[i] <= 6
+           & !is.na(integ$how_high[i])) {
+    integ$high_status[i] = "M"
+  }
+else if (integ$how_high[i] >= 6 & integ$how_high[i] <= 10
+         & !is.na(integ$how_high[i])) {
+    integ$high_status[i] = "H"
+  }
+}
+```
+
+```{r}
+# Add L+M/H high status column
+integ$high_status2 <- NA
+for (i in 1:nrow(integ)) {
+  if (is.na(integ$how_high[i]) | integ$how_high[i] == 0) {
+    integ$high_status2[i] = "N"
+  }
+  else if (integ$how_high[i] >= 1 & integ$how_high[i] <= 6
+           & !is.na(integ$how_high[i])) {
+    integ$high_status2[i] = "L + M"
+  }
+else if (integ$how_high[i] >= 6 & integ$how_high[i] <= 10
+         & !is.na(integ$how_high[i])) {
+    integ$high_status2[i] = "I"
+  }
+}
+```
+
+```{r}
+# Add L/M/H craving status column
+integ$craving_status <- NA
+for (i in 1:nrow(integ)) {
+  if (is.na(integ$craving[i]) | integ$craving[i] == 0) {
+    integ$craving_status[i] = "N"
+  }
+  else if (integ$craving[i] >= 1 & integ$craving[i] <= 3
+      & !is.na(integ$craving[i])) {
+    integ$craving_status[i] = "L"
+  }
+  else if (integ$craving[i] >= 4 & integ$craving[i] <= 6
+           & !is.na(integ$craving[i])) {
+    integ$craving_status[i] = "M"
+  }
+else if (integ$craving[i] >= 6 & integ$craving[i] <= 10
+         & !is.na(integ$craving[i])) {
+    integ$craving_status[i] = "H"
+  }
+}
+```
+
+```{r}
+# Add L+M/H craving status column
+integ$craving_status2 <- NA
+for (i in 1:nrow(integ)) {
+  if (is.na(integ$craving[i]) | integ$craving[i] == 0) {
+    integ$craving_status2[i] = "N"
+  }
+  else if (integ$craving[i] >= 1 & integ$craving[i] <= 6
+      & !is.na(integ$craving[i])) {
+    integ$craving_status2[i] = "L + M"
+  }
+else if (integ$craving[i] >= 6 & integ$craving[i] <= 10
+         & !is.na(integ$craving[i])) {
+    integ$craving_status2[i] = "H"
+  }
+}
+```
+
+```{r}
+# Add PID column
+integ$pid <- NA
+for (i in 1:nrow(integ)) {
+  for (j in 1:nrow(mj_id)) {
+    if (integ$device_id[i] == mj_id$device_id[j]) {
+      integ$pid[i] = mj_id$pid[j]
+    }
+  }
+}
+```
+
+```{r}
+# labeling study duration day
+
+new_integ <- setNames(data.frame(matrix(ncol = length(colnames(integ)),
+                                         nrow = 0)), colnames(integ))
+
+for (i in 1:length(unique(integ$device_id))) {
+  df <- subset(integ, device_id == unique(integ$device_id)[i])
+  day_index <- 1
+  prev_day <- day(df$timestamp[1])
+  for (j in 1:nrow(df)) {
+    if (day(df$timestamp[j]) == prev_day) {
+      df$day_label[j] = day_index
+    }
+    else if (day(df$timestamp[j]) != prev_day) {
+      day_index <- day_index + 1
+      df$day_label[j] <- day_index
+      prev_day <- day(df$timestamp[j])
+    }
+  }
+  new_integ <- bind_rows(new_integ, df)
+}
+
+integ <- new_integ
+
+integ$week <- wday(integ$timestamp, label=TRUE)
+```
+
+```{r}
+# Creating new dataframe with no duplicate MUSE scores
+# Matching MUSE scores to the first corresponding ESM survey timestamp
+uniq_integ <- integ
+uniq_integ[,2:42][duplicated(uniq_integ[,2:42]),] <- NA
+```
+
+```{r}
+# Exclude rows without MUSE scores
+uniq_integ <- uniq_integ %>% drop_na(id)
+
+# Exclude participants with less than 4 sessions (-9 rows) (-7 participants)
+for (i in 1:length(unique(muse$id))) {
+  if (nrow(subset(uniq_integ, id == unique(muse$id)[i])) < 4) {
+    uniq_integ <- subset(uniq_integ, id != unique(muse$id)[i])
+  }
+}
+
+# Exclude first ESM + MUSE for PID001 ~ PID010 (-10 rows) (-0 participant)
+uniq_integ <- uniq_integ[-c(which(!duplicated(uniq_integ$device_id))[1:10]),]
+
+# Exclude strange case for flowers average response time (-1 row) (-0 participant)
+uniq_integ <- subset(uniq_integ, F_num_cor <= 6)
+
+# Exclude participants with no high sessions (-63 rows) (-5 participants)
+#for (i in 1:length(unique(muse$id))) {
+#  if (!("high" %in% subset(uniq_integ, id == unique(muse$id)[i])$status2)) {
+#    uniq_integ <- subset(uniq_integ, id != unique(muse$id)[i])
+#  }
+#}
+```
+
+```{r}
+# Exclude rows with only 14 Stroop tasks within one set (2805, 65)
+uniq_integ <- subset(uniq_integ, S_num_cor > 14)
+```
+
+```{r}
+sum_uniq_integ <- uniq_integ[,unlist(lapply(uniq_integ, is.numeric))]
+desc_stat <- round(stat.desc(sum_uniq_integ[,-c(1,59)]), 3)[-c(1,2,3,6,7,8,10,11,12,14),]
+```
+
+```{r}
+for (i in 1:nrow(uniq_integ)) {
+  if (uniq_integ$other_use[i] %in% c("", "[\"none\"]", "[none]",
+         "[\"other: nothing\"]", "[\"other: none\"]", "[error]",
+         "[\"other: test\"]", "[nothing]")) {
+    uniq_integ$other_use[i] <- ""
+  }
+  else if (uniq_integ$other_use[i] %in% c("[caffeine]", "[\"caffeine\"]")) {
+    uniq_integ$other_use[i] <- "caffeine"
+  }
+  else if (uniq_integ$other_use[i] %in% c("[drank alcohol]", "[\"alcohol\"]",
+          "[\"drank alcohol\"]")) {
+    uniq_integ$other_use[i] <- "alcohol"
+  }
+  else if (uniq_integ$other_use[i] %in% c("[\"used tobacco\"]", "[tobacco]",
+         "[\"tobacco\"]")) {
+    uniq_integ$other_use[i] <- "tobacco"
+  }
+  else if (uniq_integ$other_use[i] %in% c("[\"other: nyquil\"]")) {
+    uniq_integ$other_use[i] <- "nyquil"
+  }
+  else if (uniq_integ$other_use[i] %in% c("[\"other: juul\"]")) {
+    uniq_integ$other_use[i] <- "juul"
+  }
+  else if (uniq_integ$other_use[i] %in% c("[\"other: nicotine\"]", "[\"other: nicotene\"]")) {
+    uniq_integ$other_use[i] <- "nicotine"
+  }
+  else if (uniq_integ$other_use[i] %in% c("[\"used tobacco\",\"drank alcohol\"]",
+          "[\"alcohol\",\"tobacco\"]")) {
+    uniq_integ$other_use[i] <- "alcohol, tobacco"
+  }
+  else if (uniq_integ$other_use[i] %in% c("[\"alcohol\",\"caffeine\"]")) {
+    uniq_integ$other_use[i] <- "alcohol, caffeine"
+  }
+  else if (uniq_integ$other_use[i] %in% c("[\"tobacco\",\"caffeine\"]")) {
+    uniq_integ$other_use[i] <- "caffeine, tobacco"
+  }
+  else if (uniq_integ$other_use[i] %in% c("[\"alcohol\",\"other: juul\"]")) {
+    uniq_integ$other_use[i] <- "alcohol, juul"
+  }
+}
+```
+
+```{r}
+for (i in 1:nrow(uniq_integ)) {
+  if (uniq_integ$reason[i] %in% c("", "[\"other: just wanted to\"]",
+         "[\"other: no reason\"]", "[\"other: test\"]", "[]",
+         "[\"other: I felt like it \"]", "[\"other: wanted to\"]")) {
+    uniq_integ$reason[i] <- ""
+  }
+  else if (uniq_integ$reason[i] %in% c("[\"other: watch tv \"]")) {
+    uniq_integ$reason[i] <- "watch TV"
+  }
+  else if (uniq_integ$reason[i] %in% c("[\"to social\"]", "[to_social]",
+          "[\"to social\",\"other: birthday party\"]", "[\"other: for a concert\"]",
+          "[\"to social\",\"other: nice weather\"]", "[\"to social\",\"other: fun\"]",
+          "[\"other: for fun\"]", "[\"other: fun\"]")) {
+    uniq_integ$reason[i] <- "social/fun"
+  }
+  else if (uniq_integ$reason[i] %in% c("[to_cope]", "[\"to cope\"]")) {
+    uniq_integ$reason[i] <- "cope"
+  }
+  else if (uniq_integ$reason[i] %in% c("[symptom relief]", "[\"other: medical\"]")) {
+    uniq_integ$reason[i] <- "medical"
+  }
+  else if (uniq_integ$reason[i] %in% c("[\"other: to relax\"]", "[\"other: relax\"]",
+        "[\"other: to unwind\"]", "[relaxing]", "[\"other: rest\"]",
+        "[chill out]", "[\"other: to chill\"]", "[\"other: chill\"]")) {
+    uniq_integ$reason[i] <- "relax"
+  }
+  else if (uniq_integ$reason[i] %in% c("[\"other: to sleep\"]",
+          "[\"other: sleep\"]", "[\"other: relaxation\\/sleep\"]")) {
+    uniq_integ$reason[i] <- "sleep"
+  }
+  else if (uniq_integ$reason[i] %in% c("[\"other: to get high\"]",
+          "[\"other: to be high\"]", "[\"other: feeling\"]")) {
+    uniq_integ$reason[i] <- "feeling/getting high"
+  }
+  else if (uniq_integ$reason[i] %in% c("[\"other: to enjoy my food \"]")) {
+    uniq_integ$reason[i] <- "enjoy food"
+  }
+  else if (uniq_integ$reason[i] %in% c("[\"other: bored\"]")) {
+    uniq_integ$reason[i] <- "bored"
+  }
+  else if (uniq_integ$reason[i] %in%
+           c("[\"other: to reward myself from day of studying\"]")) {
+    uniq_integ$reason[i] <- "reward oneself"
+  }
+  else if (uniq_integ$reason[i] %in% c("[\"to social\",\"other: relax\"]")) {
+    uniq_integ$reason[i] <- "relax, social/fun"
+  }
+  else if (uniq_integ$reason[i] %in% c("[\"to cope\",\"other: fun\"]",
+          "[\"to cope\",\"other: fiun\"]", "[\"to cope\",\"to social\"]")) {
+    uniq_integ$reason[i] <- "cope, social/fun"
+  }
+  else if (uniq_integ$reason[i] %in% c("[\"to cope\",\"other: sleep\"]")) {
+    uniq_integ$reason[i] <- "cope, sleep"
+  }
+  else if (uniq_integ$reason[i] %in% c("[\"to social\",\"other: to sleep\"]")) {
+    uniq_integ$reason[i] <- "sleep, social/fun"
+  }
+}
+```
+
+```{r}
+for (i in 1:nrow(uniq_integ)) {
+  if (uniq_integ$place[i] %in% c("", "[]", "[\"other: test\"]", "[\"other: \"]")) {
+    uniq_integ$place[i] <- ""
+  }
+  else if (uniq_integ$place[i] %in% c("[\"home\"]", "[home]")) {
+    uniq_integ$place[i] <- "home"
+  }
+  else if (uniq_integ$place[i] %in% c("[\"other: concert\"]", "[\"other: a park\"]",
+          "[\"other: outside \"]", "[\"other: outside\"]", "[\"other: skatepark\"]")) {
+    uniq_integ$place[i] <- "outside"
+  }
+  else if (uniq_integ$place[i] %in% c("[\"other:  car\"]", "[\"other: car\"]")) {
+    uniq_integ$place[i] <- "car"
+  }
+  else if (uniq_integ$place[i] %in% c("[\"other's home\"]", "[\"other: dorm\"]")) {
+    uniq_integ$place[i] <- "other's home"
+  }
+  else if (uniq_integ$place[i] %in% c("[\"home\",\"other: car\"]")) {
+    uniq_integ$place[i] <- "car, home"
+  }
+  else if (uniq_integ$place[i] %in% c("[\"home\",\"other's home\",\"other: \"]",
+          "[\"home\",\"other's home\"]", "[\"home\",\"other: home\\/party\"]")) {
+    uniq_integ$place[i] <- "home, other's home"
+  }
+  else if (uniq_integ$place[i] %in% c("[\"home\",\"other: walking\"]")) {
+    uniq_integ$place[i] <- "home, outside"
+  }
+  else if (uniq_integ$place[i] %in% c("[\"home\",\"other's home\",\"other: car\"]")) {
+    uniq_integ$place[i] <- "car, home, other's home"
+  }
+  else if (uniq_integ$place[i] %in% c("[\"work\\/school\"]")) {
+    uniq_integ$place[i] <- "school, work"
+  }
+  else if (uniq_integ$place[i] %in% c("[\"home\",\"work\\/school\",\"other: dorm\"]")) {
+    uniq_integ$place[i] <- "home, other's home, school, work"
+  }
+}
+```
+
+```{r}
+for (i in 1:nrow(uniq_integ)) {
+  if (uniq_integ$alone[i] %in% c("[\"other: \"]", "social_alone", "[\"alone\"]",
+          "[\"other: none\"]", "[\"other: at a function\"]", "[\"other:  \"]")) {
+    uniq_integ$alone[i] <- "alone"
+  }
+  else if (uniq_integ$alone[i] %in% c("[\"other: Friends\"]", "[\"other: with friends\"]",
+          "[\"other: others\"]", "[\"other: im smoking with friends \"]",
+          "[\"other: Pals\"]", "[\"other: with orhers\"]", "[\"other: friends \"]",
+          "[\"other: friends\"]", "[\"other: with others\"]", "[\"other: 2 friends\"]",
+          "[\"other: with friends \"]", "[\"other: 4\"]", "[\"other: 8 pals playing crds\"]",
+          "[\"other: with others \"]", "[\"other: three friends\"]",
+          "[\"other: 3\"]", "social_others")) {
+    uniq_integ$alone[i] <- "friends (>1)"
+  }
+  else if (uniq_integ$alone[i] %in% c("[\"other: Girlfriend\"]","[\"other: with partner \"]",
+           "[\"other: girlfriend\"]", "[\"other: gf\"]", "[\"other: girlfriend \"]")) {
+    uniq_integ$alone[i] <- "girl/boyfriend"
+  }
+  else if (uniq_integ$alone[i] %in% c("[\"other: friend\\/roommate\"]",
+           "[\"other: roomate\"]", "[\"other: friend \"]", "[\"other: just with one friend\"]",
+           "[\"other: friend\"]", "[\"other: roommate\"]", "[\"other: With a friend\"]",
+           "[\"other: roommate \"]", "[\"other: 1\"]")) {
+    uniq_integ$alone[i] <- "friend (1)"
+  }
+}
+```
+
+```{r}
+for (i in 1:nrow(uniq_integ)) {
+  if (uniq_integ$method[i] %in% c("", "[\"other: test\"]",
+          "[\"other: dont remwmber\"]")) {
+    uniq_integ$method[i] <- ""
+          }
+  else if (uniq_integ$method[i] %in% c("[\"bong\"]", "[\"other: bubbler\"]",
+          "[\"other: gravity bong\"]",
+          "[\"other: gravitybong \"]", "[\"other: gravity bong \"]",
+          "[\"other: gb\"]", "[\"other: waterfall geeb\"]")) {
+    uniq_integ$method[i] <- "bong"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"bowl\"]", "[bowl]")) {
+    uniq_integ$method[i] <- "bowl"
+  }
+  else if (uniq_integ$method[i] %in% c("[joint]", "[\"joint\"]")) {
+    uniq_integ$method[i] <- "joint"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"other: cartridge\"]",
+          "[\"other: cartidge\"]", "[\"other: cartridg\"]")) {
+    uniq_integ$method[i] <- "cartridge"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"other: tincture\"]")) {
+    uniq_integ$method[i] <- "tincture"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"other: Edible\"]",
+          "[\"other: edibile\"]", "[\"other: edible\"]")) {
+    uniq_integ$method[i] <- "edible"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"other: dugout\"]",
+          "[\"other: dugout (1 hitter)\"]")) {
+    uniq_integ$method[i] <- "dugout"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"other: vaporizer\"]",
+          "[\"other: marijuana vaporizer\"]", "[\"other: vaporizer (weed)\"]",
+          "vape", "[\"other: vape\"]")) {
+    uniq_integ$method[i] <- "vaporizer"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"other: pen\"]", "[\"dab pen\"]",
+          "[pen]")) {
+    uniq_integ$method[i] <- "pen"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"blunt\"]", "[blunt]")) {
+    uniq_integ$method[i] <- "blunt"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"pipe\"]")) {
+    uniq_integ$method[i] <- "pipe"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"bong\",\"blunt\"]")) {
+    uniq_integ$method[i] <- "blunt, bong"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"joint\",\"bong\"]")) {
+    uniq_integ$method[i] <- "bong, joint"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"bowl\",\"bong\",\"dab pen\"]")) {
+    uniq_integ$method[i] <- "bong, bowl, pen"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"bowl\",\"blunt\"]",
+          "[\"bowl\",\"blunt\",\"other: \"]")) {
+    uniq_integ$method[i] <- "blunt, bowl"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"bong\",\"blunt\",\"dab pen\"]")) {
+    uniq_integ$method[i] <- "blunt, bong, pen"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"joint\",\"blunt\"]")) {
+    uniq_integ$method[i] <- "blunt, joint"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"joint\",\"dab pen\"]")) {
+    uniq_integ$method[i] <- "joint, pen"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"dab pen\",\"other: vaporizer\"]")) {
+    uniq_integ$method[i] <- "pen, vaporizer"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"bowl\",\"dab pen\"]")) {
+    uniq_integ$method[i] <- "bowl, pen"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"bong\",\"dab pen\"]")) {
+    uniq_integ$method[i] <- "bong, pen"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"bowl\",\"bong\"]")) {
+    uniq_integ$method[i] <- "bong, bowl"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"joint\",\"bong\",\"blunt\",\"dab pen\"]")) {
+    uniq_integ$method[i] <- "blunt, bong, joint, pen"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"joint\",\"bowl\"]")) {
+    uniq_integ$method[i] <- "bowl, joint"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"blunt\",\"dab pen\"]")) {
+    uniq_integ$method[i] <- "blunt, pen"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"bowl\",\"blunt\",\"other: gb\"]")) {
+    uniq_integ$method[i] <- "blunt, bong, bowl"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"joint\",\"blunt\",\"dab pen\"]")) {
+    uniq_integ$method[i] <- "blunt, joint, pen"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"dab pen\",\"other: edible\"]")) {
+    uniq_integ$method[i] <- "edible, pen"
+  }
+  else if (uniq_integ$method[i] %in% c("[\"dab pen\",\"other: vaporizer (weed)\"]")) {
+    uniq_integ$method[i] <- "pen, vaporizer"
+  }
+}
+```
+
+```{r}
+for (i in 1:nrow(uniq_integ)) {
+  if (uniq_integ$unit[i] %in% c("")) {
+    uniq_integ$unit[i] <- ""
+  }
+  else if (uniq_integ$unit[i] %in% c("[\"grams\"]")) {
+    uniq_integ$unit[i] <- "grams"
+  }
+  else if (uniq_integ$unit[i] %in% c("[\"hits\"]")) {
+    uniq_integ$unit[i] <- "hits"
+  }
+  else if (uniq_integ$unit[i] %in% c("[\"grams\",\"hits\"]")) {
+    uniq_integ$unit[i] <- "hits, grams"
+  }
+}
+```
+
+## Compliance
+
+```{r}
+# ESM compliance per participant
+esm_compliance <- setNames(data.frame(matrix(ncol = length(unique(integ$device_id)),
+                                         nrow = 7)), unique(integ$device_id))
+
+for (i in 1:length(esm_compliance)) {
+  esm_par <- subset(integ, device_id == unique(device_id)[i])
+  esm_compliance[1,i] = nrow(esm_par)
+  esm_compliance[2,i] = nrow(subset(esm_par, status == "high"))
+  esm_compliance[3,i] = nrow(subset(esm_par, status == "non_high"))
+  
+  esm_compliance[4,i] = as.character(subset(mj_id, device_id == unique(device_id)[i])$freq)
+  
+  duration <- as.numeric(esm_par$day_label[nrow(esm_par)])
+  high_ses <- nrow(subset(esm_par, (status2 == "high" & survey_type == "start")))
+  
+  if ((high_ses/duration)*7 > 4) {
+    esm_compliance[5,i] = "heavy"
+    esm_compliance[6,i] = round(high_ses/duration, 3)
+  }
+  else if ((high_ses/duration)*7 <= 4 & (high_ses/duration)*7 > 0) {
+    esm_compliance[5,i] = "regular"
+    esm_compliance[6,i] = round(high_ses/duration, 3)
+  }
+  else if ((high_ses/duration)*7 == 0) {
+    esm_compliance[5,i] = "low"
+    esm_compliance[6,i] = round(high_ses/duration, 3)
+  }
+  esm_compliance[7,i] = duration
+}
+
+rownames(esm_compliance) = c("Total ESM", "High (1~10) Reports", "High (0) Reports",
+                             "Reported Frequency", "Actual Frequency",
+                             "Daily Frequency", "Duration")
+esm_compliance
+
+#datatable(esm_compliance, extensions = 'FixedColumns',
+#  options = list(dom = 't', scrollX = TRUE, fixedColumns = TRUE))
+
+# MUSE compliance per participant
+muse_compliance <- setNames(data.frame(matrix(ncol = length(unique(integ$id)[-2]),
+                                         nrow = 1)), unique(integ$id)[-2])
+
+for (i in 1:length(muse_compliance)) {
+  muse_par <- subset(integ, id == (unique(id)[-2])[i])
+  muse_compliance[1,i] = nrow(muse_par)
+}
+
+rownames(muse_compliance) = c("Total MUSE")
+
+muse_compliance
+#datatable(muse_compliance, extensions = 'FixedColumns',
+#  options = list(dom = 't', scrollX = TRUE, fixedColumns = TRUE))
+```
+
+```{r}
+# add reported and actual frequency by participant
+uniq_integ$rep_freq <- NA
+uniq_integ$act_freq <- NA
+
+for (i in 1:nrow(uniq_integ)) {
+  for (j in 1:ncol(esm_compliance)) {
+    if (uniq_integ$device_id[i] == colnames(esm_compliance[j])) {
+      uniq_integ$rep_freq[i] <- esm_compliance[,colnames(esm_compliance[j])][4]
+      uniq_integ$act_freq[i] <- esm_compliance[,colnames(esm_compliance[j])][5]
+    }
+  }
+}
+```
+
+```{r}
+smoking_session <- setNames(data.frame(matrix(ncol = length(colnames(integ)),
+                                         nrow = 0)), colnames(integ))
+n_row <- numeric()
+
+for (i in 1:nrow(uniq_integ)) {
+  if ((!is.na(uniq_integ$start_time[i]) && (!is.na(uniq_integ$end_time[i])))) {
+    n_row <- c(n_row, i)
+    smoking_session <- rbind(smoking_session, uniq_integ[i,])
+  }
+}
+smoking_session$row = n_row
+#smoking_session["1336",]$end_time <- as.POSIXct("2018-12-30 22:38:00 EST")
+
+for (i in 1:nrow(smoking_session)) {
+  diffhour <- difftime(smoking_session$end_time[i],
+                   smoking_session$start_time[i], units="hours")
+  diffmin <- difftime(smoking_session$end_time[i],
+                   smoking_session$start_time[i], units="mins")
+  smoking_session$session_len[i] <- round(diffmin, 2)
+
+  diffrep <- difftime(smoking_session$timestamp[i],
+                   smoking_session$start_time[i], units="mins")
+  smoking_session$diff_report[i] <- round(diffrep, 2)
+
+  if (as.numeric(diffhour) > 0 && as.numeric(diffhour) < 12) {
+    smoking_session$session_label[i] <- "smoking_session"
+  }
+  else {
+    smoking_session$session_label[i] <- "non_smoking_session"
+  }
+}
+
+smoking_session <- subset(smoking_session, diff_report > 0)
+smoking_session <- subset(smoking_session, session_len > 0)
+
+for (i in 2:nrow(smoking_session)) {
+  if (smoking_session$end_time[i-1] == smoking_session$end_time[i] &
+      !is.na(smoking_session$end_time[i-1]) & !is.na(smoking_session$end_time[i])) {
+    if (smoking_session$start_time[i-1] != smoking_session$start_time[i] &
+        !is.na(smoking_session$start_time[i-1] )& !is.na(smoking_session$start_time[i])) {
+      smoking_session$end_time[i] <- NA
+    }
+  }
+}
+
+smoking_session <- subset(smoking_session, !is.na(end_time))
+```

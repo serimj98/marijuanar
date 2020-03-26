@@ -1,0 +1,2415 @@
+---
+title: "correlation_analysis_2.Rmd"
+author: "Serim Jang (serimj)"
+date: "6/24/2019"
+output: html_document
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+## Running t-tests on subsetted dataframes
+
+```{r}
+# Creating dataframes for different statuses of high
+## high: start/end survey with high score of 1~10
+## non_high: start/end survey with high score of 0
+## na_high: timed surveys with no `how_high` information
+
+high <- uniq_integ[uniq_integ$how_high > 0,]
+non_high <- uniq_integ[uniq_integ$how_high == 0,]
+na_high <- uniq_integ[is.na(uniq_integ$how_high),]
+non_na_high <- bind_rows(non_high, na_high)
+
+craving <- uniq_integ[uniq_integ$craving > 0,]
+non_craving <- uniq_integ[uniq_integ$craving == 0,]
+anxious <- uniq_integ[uniq_integ$anxious > 0,]
+non_anxious <- uniq_integ[uniq_integ$anxious == 0,]
+
+# Creating dataframes for different survey types
+start <- subset(uniq_integ, survey_type == "start")
+end <- subset(uniq_integ, survey_type == "end")
+morning <- subset(uniq_integ, survey_type == "morning")
+afternoon <- subset(uniq_integ, survey_type == "afternoon")
+evening <- subset(uniq_integ, survey_type == "evening")
+```
+
+```{r}
+# compare_test(high, non_high): create a table of results of t-test for numeric variables
+## high: dataframe with start/end surveys with high value above 0
+## non_high:dataframe with start/end surveys with high value equal to 0
+compare_test <- function(high, non_high) {
+  col <- colnames(integ)[c(3:29)]
+  test_df <- setNames(data.frame(matrix(ncol = length(col), nrow = 0)), col)
+  for (i in 1:length(col)) {
+    test_df[1,i] <- t.test(high[[col[i]]], non_high[[col[i]]])$statistic[[1]]
+    test_df[2,i] <- t.test(high[[col[i]]], non_high[[col[i]]])$parameter
+    test_df[3,i] <- t.test(high[[col[i]]], non_high[[col[i]]])$p.value
+    test_df[4,i] <- t.test(high[[col[i]]], non_high[[col[i]]])$conf.int[1]
+    test_df[5,i] <- t.test(high[[col[i]]], non_high[[col[i]]])$conf.int[2]
+    test_df[6,i] <- t.test(high[[col[i]]], non_high[[col[i]]])$estimate[[1]]
+    test_df[7,i] <- t.test(high[[col[i]]], non_high[[col[i]]])$estimate[[2]]
+  }
+  row.names(test_df) <- c("statistic", "parameter", "p.value", "conf.int(lower)",
+                          "conf.int(upper)", "estimate(Y)", "estimate(N)")
+  return (test_df)
+}
+```
+
+```{r, echo = TRUE}
+# Creating dataframe of t-test summary
+round(compare_test(high, non_high), digits=6)
+round(compare_test(non_high, na_high), digits=6)
+round(compare_test(high, na_high), digits=6)
+round(compare_test(craving, non_craving), digits=6)
+round(compare_test(anxious, non_anxious), digits=6)
+round(compare_test(non_na_high, high), digits=6)
+
+#datatable(round(compare_test(high, non_high), digits=6), extensions = 'FixedColumns',
+#  options = list(dom = 't', scrollX = TRUE, fixedColumns = TRUE))
+#datatable(round(compare_test(non_high, na_high), digits=6), extensions = 'FixedColumns',
+#  options = list(dom = 't', scrollX = TRUE, fixedColumns = TRUE))
+#datatable(round(compare_test(high, na_high), digits=6), extensions = 'FixedColumns',
+#  options = list(dom = 't', scrollX = TRUE, fixedColumns = TRUE))
+#datatable(round(compare_test(craving, non_craving), digits=6), extensions = 'FixedColumns',
+#  options = list(dom = 't', scrollX = TRUE, fixedColumns = TRUE))
+#datatable(round(compare_test(anxious, non_anxious), digits=6), extensions = 'FixedColumns',
+#  options = list(dom = 't', scrollX = TRUE, fixedColumns = TRUE))
+#datatable(round(compare_test(non_na_high, high), digits=6), extensions = 'FixedColumns',
+#  options = list(dom = 't', scrollX = TRUE, fixedColumns = TRUE))
+```
+
+```{r}
+smoking_session <- setNames(data.frame(matrix(ncol = length(colnames(integ)),
+                                         nrow = 0)), colnames(integ))
+n_row <- numeric()
+
+for (i in 1:nrow(uniq_integ)) {
+  if ((!is.na(uniq_integ$start_time[i]) && (!is.na(uniq_integ$end_time[i])))) {
+    n_row <- c(n_row, i)
+    smoking_session <- rbind(smoking_session, uniq_integ[i,])
+  }
+}
+smoking_session$row = n_row
+
+for (i in 1:nrow(smoking_session)) {
+  diffhour <- difftime(smoking_session$end_time[i],
+                   smoking_session$start_time[i], units="hours")
+  diffmin <- difftime(smoking_session$end_time[i],
+                   smoking_session$start_time[i], units="mins")
+  smoking_session$session_len[i] <- round(diffmin, 2)
+
+  diffrep <- difftime(smoking_session$timestamp[i],
+                   smoking_session$start_time[i], units="mins")
+  smoking_session$diff_report[i] <- round(diffrep, 2)
+
+  if (as.numeric(diffhour) > 0 && as.numeric(diffhour) < 2) {
+    smoking_session$session_label[i] <- "smoking_session"
+  }
+  else {
+    smoking_session$session_label[i] <- "non_smoking_session"
+  }
+}
+
+smoking_session <- subset(smoking_session, diff_report > 0)
+smoking_session <- subset(smoking_session, session_len > 0)
+```
+
+## Distribution of `how_high` & `craving` scores
+
+```{r}
+# Finding distribution of responses of how high for start/end survey
+ggplot(data=uniq_integ, aes(x=how_high)) + geom_bar(stat="count") +
+  scale_x_continuous(breaks=0:10) +
+  labs(title = "Distribution of `how_high` Scores", x ="How High", y = "Count") +
+  coord_cartesian(xlim=c(1,10), ylim=c(0,100))
+
+# Finding distribution of responses of how high for start/end survey for high categories
+ggplot(data=subset(uniq_integ, !is.na(uniq_integ$high_status)),
+       aes(x=high_status)) + geom_bar(stat="count") +
+  labs(title = "Distribution of `how_high` Scores", x ="How High", y = "Count") +
+  scale_x_discrete(limits=c("L", "M", "H"))
+```
+
+```{r}
+# Finding distribution of responses of craving for start/timed survey
+ggplot(data=uniq_integ, aes(x=craving)) + geom_bar(stat="count") +
+  scale_x_continuous(breaks=0:10) +
+  labs(title = "Distribution of `craving` Scores", x ="Craving", y = "Count") +
+  coord_cartesian(xlim=c(1,10), ylim=c(0,400))
+```
+
+## Finding relationship between cognitive scores & `how_high`
+
+### Stroop
+
+```{r}
+# Finding relationship between S_num_cor and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=S_num_cor)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Stroop Number Correct") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_num_cor ~ how_high, uniq_integ))
+anova(lm(S_num_cor ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_num_incor and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=S_num_incor)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Stroop Number Incorrect") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_num_incor ~ how_high, uniq_integ))
+anova(lm(S_num_incor ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_perc_cor and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=S_perc_cor)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Stroop Percent Correct") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_perc_cor ~ how_high, uniq_integ))
+anova(lm(S_perc_cor ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_avg_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=S_avg_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Stroop Average Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_avg_response ~ how_high, uniq_integ))
+anova(lm(S_avg_response ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_sd_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=S_sd_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Stroop Response Time Std Dev (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_sd_response ~ how_high, uniq_integ))
+anova(lm(S_sd_response ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_max_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=S_max_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Stroop Maximum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_max_response ~ how_high, uniq_integ))
+anova(lm(S_max_response ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_min_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=S_min_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Stroop Minimum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_min_response ~ how_high, uniq_integ))
+anova(lm(S_min_response ~ how_high, uniq_integ))
+```
+
+### DSST
+
+```{r}
+# Finding relationship between D_perc_cor and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=D_perc_cor)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "DSST Percent Correct") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(D_perc_cor ~ how_high, uniq_integ))
+anova(lm(D_perc_cor ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between D_avg_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=D_avg_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "DSST Average Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(D_avg_response ~ how_high, uniq_integ))
+anova(lm(D_avg_response ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between D_sd_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=D_sd_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "DSST Response Time Std Dev (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(D_sd_response ~ how_high, uniq_integ))
+anova(lm(D_sd_response ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between D_max_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=D_max_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "DSST Maximum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(D_max_response ~ how_high, uniq_integ))
+anova(lm(D_max_response ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between D_min_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=D_min_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "DSST Minimum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(D_min_response ~ how_high, uniq_integ))
+anova(lm(D_min_response ~ how_high, uniq_integ))
+```
+
+### Flowers
+
+```{r}
+# Finding relationship between F_perc_cor and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=F_perc_cor)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Flowers Percent Correct") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(F_perc_cor ~ how_high, uniq_integ))
+anova(lm(F_perc_cor ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between F_avg_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=F_avg_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Flowers Average Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(F_avg_response ~ how_high, uniq_integ))
+anova(lm(F_avg_response ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between F_sd_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=F_sd_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Flowers Response Time Std Dev (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(F_sd_response ~ how_high, uniq_integ))
+anova(lm(F_sd_response ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between F_max_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=F_max_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Flowers Maximum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(F_max_response ~ how_high, uniq_integ))
+anova(lm(F_max_response ~ how_high, uniq_integ))
+```
+
+```{r}
+# Finding relationship between F_min_response and how_high
+ggplot(data=uniq_integ, aes(x=how_high, y=F_min_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="How High", y = "Flowers Minimum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(F_min_response ~ how_high, uniq_integ))
+anova(lm(F_min_response ~ how_high, uniq_integ))
+```
+
+## Finding relationship between cognitive scores & `craving`
+
+### Stroop
+
+```{r}
+# Finding relationship between S_num_cor and craving
+ggplot(data=uniq_integ, aes(x=craving, y=S_num_cor)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Stroop Number Correct") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_num_cor ~ craving, uniq_integ))
+anova(lm(S_num_cor ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_num_incor and craving
+ggplot(data=uniq_integ, aes(x=craving, y=S_num_incor)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Stroop Number Incorrect") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_num_incor ~ craving, uniq_integ))
+anova(lm(S_num_incor ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_perc_cor and craving
+ggplot(data=uniq_integ, aes(x=craving, y=S_perc_cor)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Stroop Percent Correct") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_perc_cor ~ craving, uniq_integ))
+anova(lm(S_perc_cor ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_avg_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=S_avg_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Stroop Average Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_avg_response ~ craving, uniq_integ))
+anova(lm(S_avg_response ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_sd_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=S_sd_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Stroop Response Time Std Dev (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_sd_response ~ craving, uniq_integ))
+anova(lm(S_sd_response ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_max_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=S_max_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Stroop Maximum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_max_response ~ craving, uniq_integ))
+anova(lm(S_max_response ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between S_min_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=S_min_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Stroop Minimum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(S_min_response ~ craving, uniq_integ))
+anova(lm(S_min_response ~ craving, uniq_integ))
+```
+
+### DSST
+
+```{r}
+# Finding relationship between D_perc_cor and craving
+ggplot(data=uniq_integ, aes(x=craving, y=D_perc_cor)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "DSST Percent Correct") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(D_perc_cor ~ craving, uniq_integ))
+anova(lm(D_perc_cor ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between D_avg_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=D_avg_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "DSST Average Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(D_avg_response ~ craving, uniq_integ))
+anova(lm(D_avg_response ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between D_sd_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=D_sd_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "DSST Response Time Std Dev (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(D_sd_response ~ craving, uniq_integ))
+anova(lm(D_sd_response ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between D_max_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=D_max_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "DSST Maximum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(D_max_response ~ craving, uniq_integ))
+anova(lm(D_max_response ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between D_min_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=D_min_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "DSST Minimum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(D_min_response ~ craving, uniq_integ))
+anova(lm(D_min_response ~ craving, uniq_integ))
+```
+
+### Flowers
+
+```{r}
+# Finding relationship between F_perc_cor and craving
+ggplot(data=uniq_integ, aes(x=craving, y=F_perc_cor)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Flowers Percent Correct") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(F_perc_cor ~ craving, uniq_integ))
+anova(lm(F_perc_cor ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between F_avg_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=F_avg_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Flowers Average Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(F_avg_response ~ craving, uniq_integ))
+anova(lm(F_avg_response ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between F_sd_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=F_sd_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Flowers Response Time Std Dev (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(F_sd_response ~ craving, uniq_integ))
+anova(lm(F_sd_response ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between F_max_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=F_max_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Flowers Maximum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(F_max_response ~ craving, uniq_integ))
+anova(lm(F_max_response ~ craving, uniq_integ))
+```
+
+```{r}
+# Finding relationship between F_min_response and craving
+ggplot(data=uniq_integ, aes(x=craving, y=F_min_response)) +
+  geom_point() +
+  geom_smooth(method = 'lm', size=0.5, se = FALSE) +
+  labs(x ="Craving", y = "Flowers Minimum Response Time (ms)") +
+  scale_x_continuous(breaks=0:10)
+
+summary(lm(F_min_response ~ craving, uniq_integ))
+anova(lm(F_min_response ~ craving, uniq_integ))
+```
+
+## Finding relationship between cognitive scores & `high_status`
+
+```{r}
+uniq_integ$high_status <- factor(uniq_integ$high_status, levels=c("H", "M", "L", "N"))
+nona_uniq_integ <- subset(uniq_integ, !is.na(high_status))
+```
+
+### Stroop
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$S_num_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$S_num_cor, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$S_num_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$S_num_cor, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$S_num_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$S_num_cor, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$S_num_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$S_num_cor, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_num_cor and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=S_num_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Number Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 25.5) +
+  scale_y_continuous(limits=c(25,28))
+```
+
+```{r}
+# Finding relationship between S_num_cor and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=S_num_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Number Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 25.5) +
+  scale_y_continuous(limits=c(25,28))
+```
+
+```{r}
+# Finding relationship between S_num_cor and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=S_num_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Number Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 25.5) +
+  scale_y_continuous(limits=c(25,28))
+```
+
+```{r}
+# Finding relationship between S_num_cor and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=S_num_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Number Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 25.5) +
+  scale_y_continuous(limits=c(25,28))
+```
+
+```{r}
+# Finding relationship between S_num_cor and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=S_num_cor, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Number Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 25.5) +
+  scale_y_continuous(limits=c(25,28))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$S_num_incor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$S_num_incor, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$S_num_incor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$S_num_incor, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$S_num_incor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$S_num_incor, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$S_num_incor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$S_num_incor, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_num_incor and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=S_num_incor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Number Incorrect") +
+  stat_compare_means(label.x = 0.8, label.y = 2.3) +
+  scale_y_continuous(limits=c(0,2.5))
+```
+
+```{r}
+# Finding relationship between S_num_incor and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=S_num_incor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Number Incorrect") +
+  stat_compare_means(label.x = 0.8, label.y = 2.3) +
+  scale_y_continuous(limits=c(0,2.5))
+```
+
+```{r}
+# Finding relationship between S_num_incor and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=S_num_incor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Number Incorrect") +
+  stat_compare_means(label.x = 0.8, label.y = 2.3) +
+  scale_y_continuous(limits=c(0,2.5))
+```
+
+```{r}
+# Finding relationship between S_num_incor and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=S_num_incor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Number Incorrect") +
+  stat_compare_means(label.x = 0.8, label.y = 2.3) +
+  scale_y_continuous(limits=c(0,2.5))
+```
+
+```{r}
+# Finding relationship between S_num_incor and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=S_num_incor, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Number Incorrect") +
+  stat_compare_means(label.x = 0.8, label.y = 2.3) +
+  scale_y_continuous(limits=c(0,2.5))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$S_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$S_perc_cor, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$S_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$S_perc_cor, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$S_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$S_perc_cor, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$S_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$S_perc_cor, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_perc_cor and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=S_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.92) +
+  scale_y_continuous(limits=c(0.9,1))
+```
+
+```{r}
+# Finding relationship between S_perc_cor and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=S_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.92) +
+  scale_y_continuous(limits=c(0.9,1))
+```
+
+```{r}
+# Finding relationship between S_perc_cor and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=S_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.92) +
+  scale_y_continuous(limits=c(0.9,1))
+```
+
+```{r}
+# Finding relationship between S_perc_cor and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=S_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.92) +
+  scale_y_continuous(limits=c(0.9,1))
+```
+
+```{r}
+# Finding relationship between S_perc_cor and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=S_perc_cor, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.92) +
+  scale_y_continuous(limits=c(0.9,1))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$S_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$S_avg_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$S_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$S_avg_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$S_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$S_avg_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$S_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$S_avg_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_avg_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=S_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 150)
+```
+
+```{r}
+# Finding relationship between S_avg_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=S_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 150)
+```
+
+```{r}
+# Finding relationship between S_avg_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=S_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 150)
+```
+
+```{r}
+# Finding relationship between S_avg_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=S_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 150)
+```
+
+```{r}
+# Finding relationship between S_avg_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=S_avg_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 150)
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$S_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$S_sd_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$S_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$S_sd_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$S_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$S_sd_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$S_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$S_sd_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_sd_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=S_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1000) +
+  scale_y_continuous(limits=c(0,1000))
+```
+
+```{r}
+# Finding relationship between S_sd_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=S_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1000) +
+  scale_y_continuous(limits=c(0,1000))
+```
+
+```{r}
+# Finding relationship between S_sd_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=S_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1000) +
+  scale_y_continuous(limits=c(0,1000))
+```
+
+```{r}
+# Finding relationship between S_sd_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=S_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1000) +
+  scale_y_continuous(limits=c(0,1000))
+```
+
+```{r}
+# Finding relationship between S_sd_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=S_sd_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1000) +
+  scale_y_continuous(limits=c(0,1000))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$S_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$S_max_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$S_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$S_max_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$S_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$S_max_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$S_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$S_max_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_max_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=S_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 500) +
+  scale_y_continuous(limits=c(0,4000))
+```
+
+```{r}
+# Finding relationship between S_max_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=S_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 500) +
+  scale_y_continuous(limits=c(0,4000))
+```
+
+```{r}
+# Finding relationship between S_max_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=S_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 500) +
+  scale_y_continuous(limits=c(0,4000))
+```
+
+```{r}
+# Finding relationship between S_max_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=S_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 500) +
+  scale_y_continuous(limits=c(0,4000))
+```
+
+```{r}
+# Finding relationship between S_max_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=S_max_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 500) +
+  scale_y_continuous(limits=c(0,4000))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$S_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$S_min_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$S_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$S_min_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$S_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$S_min_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$S_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$S_min_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_min_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=S_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 770) +
+  scale_y_continuous(limits=c(200,800))
+```
+
+```{r}
+# Finding relationship between S_min_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=S_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 770) +
+  scale_y_continuous(limits=c(200,800))
+```
+
+```{r}
+# Finding relationship between S_min_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=S_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 770) +
+  scale_y_continuous(limits=c(200,800))
+```
+
+```{r}
+# Finding relationship between S_min_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=S_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 770) +
+  scale_y_continuous(limits=c(200,800))
+```
+
+```{r}
+# Finding relationship between S_min_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=S_min_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Stroop Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 770) +
+  scale_y_continuous(limits=c(200,800))
+```
+
+### DSST
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$D_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$D_perc_cor, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$D_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$D_perc_cor, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$D_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$D_perc_cor, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$D_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$D_perc_cor, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between D_perc_cor and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=D_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.83) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between D_perc_cor and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=D_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.83) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between D_perc_cor and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=D_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.83) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between D_perc_cor and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=D_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.83) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between D_perc_cor and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=D_perc_cor, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.83) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$D_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$D_avg_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$D_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$D_avg_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$D_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$D_avg_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$D_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$D_avg_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between D_avg_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=D_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1000)
+```
+
+```{r}
+# Finding relationship between D_avg_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=D_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1000)
+```
+
+```{r}
+# Finding relationship between D_avg_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=D_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1000)
+```
+
+```{r}
+# Finding relationship between D_avg_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=D_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1000)
+```
+
+```{r}
+# Finding relationship between D_avg_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=D_avg_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1000)
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$D_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$D_sd_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$D_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$D_sd_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$D_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$D_sd_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$D_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$D_sd_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between D_sd_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=D_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1900) +
+  scale_y_continuous(limits=c(0,2000))
+```
+
+```{r}
+# Finding relationship between D_sd_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=D_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1900) +
+  scale_y_continuous(limits=c(0,2000))
+```
+
+```{r}
+# Finding relationship between D_sd_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=D_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1900) +
+  scale_y_continuous(limits=c(0,2000))
+```
+
+```{r}
+# Finding relationship between D_sd_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=D_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1900) +
+  scale_y_continuous(limits=c(0,2000))
+```
+
+```{r}
+# Finding relationship between D_sd_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=D_sd_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1900) +
+  scale_y_continuous(limits=c(0,2000))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$D_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$D_max_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$D_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$D_max_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$D_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$D_max_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$D_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$D_max_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between D_max_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=D_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 9250) +
+  scale_y_continuous(limits=c(0,10000))
+```
+
+```{r}
+# Finding relationship between D_max_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=D_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 9250) +
+  scale_y_continuous(limits=c(0,10000))
+```
+
+```{r}
+# Finding relationship between D_max_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=D_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 9250) +
+  scale_y_continuous(limits=c(0,10000))
+```
+
+```{r}
+# Finding relationship between D_max_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=D_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 9250) +
+  scale_y_continuous(limits=c(0,10000))
+```
+
+```{r}
+# Finding relationship between D_max_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=D_max_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 9250) +
+  scale_y_continuous(limits=c(0,10000))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$D_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$D_min_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$D_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$D_min_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$D_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$D_min_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$D_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$D_min_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between D_min_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=D_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1700) +
+  scale_y_continuous(limits=c(500,2000))
+```
+
+```{r}
+# Finding relationship between D_min_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=D_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1700) +
+  scale_y_continuous(limits=c(500,2000))
+```
+
+```{r}
+# Finding relationship between D_min_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=D_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1700) +
+  scale_y_continuous(limits=c(500,2000))
+```
+
+```{r}
+# Finding relationship between D_min_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=D_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1700) +
+  scale_y_continuous(limits=c(500,2000))
+```
+
+```{r}
+# Finding relationship between D_min_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=D_min_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "DSST Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1700) +
+  scale_y_continuous(limits=c(500,2000))
+```
+
+### Flowers
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$F_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$F_perc_cor, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$F_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$F_perc_cor, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$F_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$F_perc_cor, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$F_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$F_perc_cor, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between F_perc_cor and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=F_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.27) +
+  scale_y_continuous(limits=c(0.25,1))
+```
+
+```{r}
+# Finding relationship between F_perc_cor and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=F_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.27) +
+  scale_y_continuous(limits=c(0.25,1))
+```
+
+```{r}
+# Finding relationship between F_perc_cor and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=F_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.27) +
+  scale_y_continuous(limits=c(0.25,1))
+```
+
+```{r}
+# Finding relationship between F_perc_cor and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=F_perc_cor, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.27) +
+  scale_y_continuous(limits=c(0.25,1))
+```
+
+```{r}
+# Finding relationship between F_perc_cor and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=F_perc_cor, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.27) +
+  scale_y_continuous(limits=c(0.25,1))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$F_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$F_avg_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$F_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$F_avg_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$F_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$F_avg_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$F_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$F_avg_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between F_avg_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=F_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 200) +
+  scale_y_continuous(limits=c(200,600))
+```
+
+```{r}
+# Finding relationship between F_avg_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=F_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 200) +
+  scale_y_continuous(limits=c(200,600))
+```
+
+```{r}
+# Finding relationship between F_avg_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=F_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 200) +
+  scale_y_continuous(limits=c(200,600))
+```
+
+```{r}
+# Finding relationship between F_avg_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=F_avg_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 200) +
+  scale_y_continuous(limits=c(200,600))
+```
+
+```{r}
+# Finding relationship between F_avg_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=F_avg_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 200) +
+  scale_y_continuous(limits=c(200,600))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$F_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$F_sd_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$F_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$F_sd_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$F_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$F_sd_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$F_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$F_sd_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between F_sd_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=F_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 550) +
+  scale_y_continuous(limits=c(0,600))
+```
+
+```{r}
+# Finding relationship between F_sd_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=F_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 550) +
+  scale_y_continuous(limits=c(0,600))
+```
+
+```{r}
+# Finding relationship between F_sd_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=F_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 550) +
+  scale_y_continuous(limits=c(0,600))
+```
+
+```{r}
+# Finding relationship between F_sd_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=F_sd_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 550) +
+  scale_y_continuous(limits=c(0,600))
+```
+
+```{r}
+# Finding relationship between F_sd_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=F_sd_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 550) +
+  scale_y_continuous(limits=c(0,600))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$F_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$F_max_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$F_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$F_max_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$F_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$F_max_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$F_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$F_max_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between F_max_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=F_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1375) +
+  scale_y_continuous(limits=c(0,1500))
+```
+
+```{r}
+# Finding relationship between F_max_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=F_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1375) +
+  scale_y_continuous(limits=c(0,1500))
+```
+
+```{r}
+# Finding relationship between F_max_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=F_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1375) +
+  scale_y_continuous(limits=c(0,1500))
+```
+
+```{r}
+# Finding relationship between F_max_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=F_max_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1375) +
+  scale_y_continuous(limits=c(0,1500))
+```
+
+```{r}
+# Finding relationship between F_max_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=F_max_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1375) +
+  scale_y_continuous(limits=c(0,1500))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "H")$F_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "H")$F_min_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "M")$F_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "M")$F_min_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "L")$F_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "L")$F_min_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ, high_status == "N")$F_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ, high_status == "N")$F_min_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between F_min_response and high_status
+ggplot(data=nona_uniq_integ,
+       aes(x=high_status, y=F_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(100,500))
+```
+
+```{r}
+# Finding relationship between F_min_response and high_status (N, L)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "L")),
+       aes(x=high_status, y=F_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(100,500))
+```
+
+```{r}
+# Finding relationship between F_min_response and high_status (N, M)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "M")),
+       aes(x=high_status, y=F_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(100,500))
+```
+
+```{r}
+# Finding relationship between F_min_response and high_status (N, H)
+ggplot(data=subset(nona_uniq_integ, high_status == c("N", "H")),
+       aes(x=high_status, y=F_min_response, fill=high_status)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(100,500))
+```
+
+```{r}
+# Finding relationship between F_min_response and high_status (high vs. non-high)
+ggplot(data=nona_uniq_integ,
+       aes(x=status2, y=F_min_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(100,500))
+```
+
+## Finding relationship between cognitive scores & `craving_status`
+
+```{r}
+uniq_integ$craving_status <- factor(uniq_integ$craving_status, levels=c("H", "M", "L", "N"))
+nona_uniq_integ2 <- subset(uniq_integ, !is.na(craving_status))
+```
+
+### Stroop
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$S_num_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$S_num_cor, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$S_num_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$S_num_cor, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$S_num_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$S_num_cor, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$S_num_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$S_num_cor, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_num_cor and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=S_num_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Number Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 25.5) +
+  scale_y_continuous(limits=c(25,28))
+```
+
+```{r}
+# Finding relationship between S_num_cor and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=S_num_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Number Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 25.5) +
+  scale_y_continuous(limits=c(25,28))
+```
+
+```{r}
+# Finding relationship between S_num_cor and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=S_num_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Number Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 25.5) +
+  scale_y_continuous(limits=c(25,28))
+```
+
+```{r}
+# Finding relationship between S_num_cor and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=S_num_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Number Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 25.5) +
+  scale_y_continuous(limits=c(25,28))
+```
+
+```{r}
+# Finding relationship between S_num_cor and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=S_num_cor, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Number Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 25.5) +
+  scale_y_continuous(limits=c(25,28))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$S_num_incor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$S_num_incor, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$S_num_incor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$S_num_incor, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$S_num_incor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$S_num_incor, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$S_num_incor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$S_num_incor, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_num_incor and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=S_num_incor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Number Incorrect") +
+  stat_compare_means(label.x = 0.8, label.y = 3.5) +
+  scale_y_continuous(limits=c(0,4))
+```
+
+```{r}
+# Finding relationship between S_num_incor and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=S_num_incor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Number Incorrect") +
+  stat_compare_means(label.x = 0.8, label.y = 3.5) +
+  scale_y_continuous(limits=c(0,4))
+```
+
+```{r}
+# Finding relationship between S_num_incor and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=S_num_incor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Number Incorrect") +
+  stat_compare_means(label.x = 0.8, label.y = 3.5) +
+  scale_y_continuous(limits=c(0,4))
+```
+
+```{r}
+# Finding relationship between S_num_incor and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=S_num_incor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Number Incorrect") +
+  stat_compare_means(label.x = 0.8, label.y = 3.5) +
+  scale_y_continuous(limits=c(0,4))
+```
+
+```{r}
+# Finding relationship between S_num_incor and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=S_num_incor, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Number Incorrect") +
+  stat_compare_means(label.x = 0.8, label.y = 3.5) +
+  scale_y_continuous(limits=c(0,4))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$S_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$S_perc_cor, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$S_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$S_perc_cor, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$S_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$S_perc_cor, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$S_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$S_perc_cor, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_perc_cor and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=S_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.84) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between S_perc_cor and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=S_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.84) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between S_perc_cor and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=S_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.84) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between S_perc_cor and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=S_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.84) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between S_perc_cor and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=S_perc_cor, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status0", y = "Stroop Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.84) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$S_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$S_avg_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$S_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$S_avg_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$S_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$S_avg_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$S_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$S_avg_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_avg_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=S_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 520) +
+  scale_y_continuous(limits=c(500,1000))
+```
+
+```{r}
+# Finding relationship between S_avg_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=S_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 520) +
+  scale_y_continuous(limits=c(500,1000))
+```
+
+```{r}
+# Finding relationship between S_avg_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=S_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 520) +
+  scale_y_continuous(limits=c(500,1000))
+```
+
+```{r}
+# Finding relationship between S_avg_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=S_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 520) +
+  scale_y_continuous(limits=c(500,1000))
+```
+
+```{r}
+# Finding relationship between S_avg_response and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=S_avg_response, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 520) +
+  scale_y_continuous(limits=c(500,1000))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$S_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$S_sd_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$S_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$S_sd_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$S_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$S_sd_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$S_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$S_sd_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_sd_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=S_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 430) +
+  scale_y_continuous(limits=c(0,500))
+```
+
+```{r}
+# Finding relationship between S_sd_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=S_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 450) +
+  scale_y_continuous(limits=c(0,500))
+```
+
+```{r}
+# Finding relationship between S_sd_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=S_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 450) +
+  scale_y_continuous(limits=c(0,500))
+```
+
+```{r}
+# Finding relationship between S_sd_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=S_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 450) +
+  scale_y_continuous(limits=c(0,500))
+```
+
+```{r}
+# Finding relationship between S_sd_response and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=S_sd_response, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 450) +
+  scale_y_continuous(limits=c(0,500))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$S_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$S_max_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$S_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$S_max_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$S_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$S_max_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$S_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$S_max_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_max_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=S_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 4250) +
+  scale_y_continuous(limits=c(500,5000))
+```
+
+```{r}
+# Finding relationship between S_max_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=S_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 4000) +
+  scale_y_continuous(limits=c(500,5000))
+```
+
+```{r}
+# Finding relationship between S_max_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=S_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 4000) +
+  scale_y_continuous(limits=c(500,5000))
+```
+
+```{r}
+# Finding relationship between S_max_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=S_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 4000) +
+  scale_y_continuous(limits=c(500,5000))
+```
+
+```{r}
+# Finding relationship between S_max_response and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=S_max_response, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 4000) +
+  scale_y_continuous(limits=c(500,5000))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$S_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$S_min_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$S_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$S_min_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$S_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$S_min_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$S_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$S_min_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between S_min_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=S_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 430) +
+  scale_y_continuous(limits=c(300,700))
+```
+
+```{r}
+# Finding relationship between S_min_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=S_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 430) +
+  scale_y_continuous(limits=c(300,700))
+```
+
+```{r}
+# Finding relationship between S_min_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=S_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 430) +
+  scale_y_continuous(limits=c(300,700))
+```
+
+```{r}
+# Finding relationship between S_min_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=S_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 430) +
+  scale_y_continuous(limits=c(300,700))
+```
+
+```{r}
+# Finding relationship between S_min_response and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=S_min_response, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Stroop Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 430) +
+  scale_y_continuous(limits=c(300,700))
+```
+
+### DSST
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$D_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$D_perc_cor, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$D_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$D_perc_cor, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$D_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$D_perc_cor, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$D_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$D_perc_cor, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between D_perc_cor and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=D_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.8) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between D_perc_cor and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=D_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.82) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between D_perc_cor and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=D_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.82) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between D_perc_cor and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=D_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.82) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+```{r}
+# Finding relationship between D_perc_cor and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=D_perc_cor, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.82) +
+  scale_y_continuous(limits=c(0.8,1))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$D_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$D_avg_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$D_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$D_avg_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$D_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$D_avg_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$D_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$D_avg_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between D_avg_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=D_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1030) +
+  scale_y_continuous(limits=c(1000,2000))
+```
+
+```{r}
+# Finding relationship between D_avg_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=D_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1030) +
+  scale_y_continuous(limits=c(1000,2000))
+```
+
+```{r}
+# Finding relationship between D_avg_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=D_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1030) +
+  scale_y_continuous(limits=c(1000,2000))
+```
+
+```{r}
+# Finding relationship between D_avg_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=D_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1030) +
+  scale_y_continuous(limits=c(1000,2000))
+```
+
+```{r}
+# Finding relationship between D_avg_response and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=D_avg_response, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1030) +
+  scale_y_continuous(limits=c(1000,2000))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$D_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$D_sd_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$D_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$D_sd_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$D_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$D_sd_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$D_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$D_sd_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between D_sd_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=D_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(0,2000))
+```
+
+```{r}
+# Finding relationship between D_sd_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=D_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(0,2000))
+```
+
+```{r}
+# Finding relationship between D_sd_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=D_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(0,2000))
+```
+
+```{r}
+# Finding relationship between D_sd_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=D_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(0,2000))
+```
+
+```{r}
+# Finding relationship between D_sd_response and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=D_sd_response, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(0,2000))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$D_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$D_max_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$D_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$D_max_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$D_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$D_max_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$D_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$D_max_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between D_max_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=D_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 9100) +
+  scale_y_continuous(limits=c(0,10000))
+```
+
+```{r}
+# Finding relationship between D_max_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=D_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 9100) +
+  scale_y_continuous(limits=c(0,10000))
+```
+
+```{r}
+# Finding relationship between D_max_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=D_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 9100) +
+  scale_y_continuous(limits=c(0,10000))
+```
+
+```{r}
+# Finding relationship between D_max_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=D_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 9100) +
+  scale_y_continuous(limits=c(0,10000))
+```
+
+```{r}
+# Finding relationship between D_max_response and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=D_max_response, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 9100) +
+  scale_y_continuous(limits=c(0,10000))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$D_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$D_min_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$D_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$D_min_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$D_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$D_min_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$D_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$D_min_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between D_min_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=D_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1470) +
+  scale_y_continuous(limits=c(500,1500))
+```
+
+```{r}
+# Finding relationship between D_min_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=D_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1470) +
+  scale_y_continuous(limits=c(500,1500))
+```
+
+```{r}
+# Finding relationship between D_min_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=D_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1470) +
+  scale_y_continuous(limits=c(500,1500))
+```
+
+```{r}
+# Finding relationship between D_min_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=D_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1470) +
+  scale_y_continuous(limits=c(500,1500))
+```
+
+```{r}
+# Finding relationship between D_min_response and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=D_min_response, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "DSST Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 1470) +
+  scale_y_continuous(limits=c(500,1500))
+```
+
+### Flowers
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$F_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$F_perc_cor, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$F_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$F_perc_cor, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$F_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$F_perc_cor, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$F_perc_cor, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$F_perc_cor, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between F_perc_cor and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=F_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.55) +
+  scale_y_continuous(limits=c(0.5,1))
+```
+
+```{r}
+# Finding relationship between F_perc_cor and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=F_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.55) +
+  scale_y_continuous(limits=c(0.5,1))
+```
+
+```{r}
+# Finding relationship between F_perc_cor and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=F_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.55) +
+  scale_y_continuous(limits=c(0.5,1))
+```
+
+```{r}
+# Finding relationship between F_perc_cor and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=F_perc_cor, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.55) +
+  scale_y_continuous(limits=c(0.5,1))
+```
+
+```{r}
+# Finding relationship between F_perc_cor and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=F_perc_cor, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Percent Correct") +
+  stat_compare_means(label.x = 0.8, label.y = 0.55) +
+  scale_y_continuous(limits=c(0.5,1))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$F_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$F_avg_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$F_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$F_avg_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$F_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$F_avg_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$F_avg_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$F_avg_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between F_avg_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=F_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 500) +
+  scale_y_continuous(limits=c(200,600))
+```
+
+```{r}
+# Finding relationship between F_avg_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=F_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 500) +
+  scale_y_continuous(limits=c(200,600))
+```
+
+```{r}
+# Finding relationship between F_avg_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=F_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 500) +
+  scale_y_continuous(limits=c(200,600))
+```
+
+```{r}
+# Finding relationship between F_avg_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=F_avg_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 500) +
+  scale_y_continuous(limits=c(200,600))
+```
+
+```{r}
+# Finding relationship between F_avg_response and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=F_avg_response, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Average Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 500) +
+  scale_y_continuous(limits=c(200,600))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$F_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$F_sd_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$F_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$F_sd_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$F_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$F_sd_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$F_sd_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$F_sd_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between F_sd_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=F_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 530) +
+  scale_y_continuous(limits=c(0,600))
+```
+
+```{r}
+# Finding relationship between F_sd_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=F_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 530) +
+  scale_y_continuous(limits=c(0,600))
+```
+
+```{r}
+# Finding relationship between F_sd_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=F_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 530) +
+  scale_y_continuous(limits=c(0,600))
+```
+
+```{r}
+# Finding relationship between F_sd_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=F_sd_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 530) +
+  scale_y_continuous(limits=c(0,600))
+```
+
+```{r}
+# Finding relationship between F_sd_response and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=F_sd_response, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Response Time Std Dev (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 530) +
+  scale_y_continuous(limits=c(0,600))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$F_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$F_max_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$F_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$F_max_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$F_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$F_max_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$F_max_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$F_max_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between F_max_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=F_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(0,1000))
+```
+
+```{r}
+# Finding relationship between F_max_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=F_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(0,1000))
+```
+
+```{r}
+# Finding relationship between F_max_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=F_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(0,1000))
+```
+
+```{r}
+# Finding relationship between F_max_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=F_max_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(0,1000))
+```
+
+```{r}
+# Finding relationship between F_max_response and craving_status (craving vs. non-craving)
+ggplot(data=subset(nona_uniq_integ2, !is.na(status3)),
+       aes(x=status3, y=F_max_response, fill=status3)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Maximum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(0,1000))
+```
+
+H -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "H")$F_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "H")$F_min_response, na.rm=TRUE), 3)`)
+
+M -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "M")$F_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "M")$F_min_response, na.rm=TRUE), 3)`)
+
+L -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "L")$F_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "L")$F_min_response, na.rm=TRUE), 3)`)
+
+N -- (M: `r round(mean(subset(nona_uniq_integ2, craving_status == "N")$F_min_response, na.rm=TRUE), 3)`, SD: `r round(sd(subset(nona_uniq_integ2, craving_status == "N")$F_min_response, na.rm=TRUE), 3)`)
+
+```{r}
+# Finding relationship between F_min_response and craving_status
+ggplot(data=nona_uniq_integ2,
+       aes(x=craving_status, y=F_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(50,500))
+```
+
+```{r}
+# Finding relationship between F_min_response and craving_status (N, L)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "L")),
+       aes(x=craving_status, y=F_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(50,500))
+```
+
+```{r}
+# Finding relationship between F_min_response and craving_status (N, M)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "M")),
+       aes(x=craving_status, y=F_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(50,500))
+```
+
+```{r}
+# Finding relationship between F_min_response and craving_status (N, H)
+ggplot(data=subset(nona_uniq_integ, craving_status == c("N", "H")),
+       aes(x=craving_status, y=F_min_response, fill=craving_status)) +
+  geom_boxplot() + labs(x ="Craving Status", y = "Flowers Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(50,500))
+```
+
+```{r}
+# Finding relationship between F_min_response and craving_status (high vs. non-high)
+ggplot(data=nona_uniq_integ2,
+       aes(x=status2, y=F_min_response, fill=status2)) +
+  geom_boxplot() + labs(x ="High Status", y = "Flowers Minimum Response Time (ms)") +
+  stat_compare_means(label.x = 0.8, label.y = 100) +
+  scale_y_continuous(limits=c(50,500))
+```
+
+## Compliance Graphs
+
+```{r}
+# Finding distribution of compliance by study duration
+ggplot(data=uniq_integ, aes(x=day_label)) + geom_bar(stat="count") +
+  scale_x_continuous(breaks=0:28) +
+  labs(title = "Compliance Throughout Study Duration", x ="Study Duration", y = "Count") +
+  coord_cartesian(xlim=c(1,28), ylim=c(0,175))
+```
+
+```{r}
+# Finding distribution of compliance by study duration
+ggplot(data=uniq_integ, aes(x=as.factor(pid), fill=status2)) + geom_bar(stat="count") +
+  labs(title = "Compliance Per Participant", x ="Participant MUSE ID", y = "Count") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 6))
+```
+
+```{r}
+# Finding distribution of compliance by study duration
+ggplot(data=subset(uniq_integ, !is.na(high_status)),
+       aes(x=as.factor(pid), fill=high_status)) + geom_bar(stat="count") +
+  labs(title = "Compliance Per Participant", x ="Participant MUSE ID", y = "Count") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 6))
+```
+
+```{r}
+# Finding distribution of compliance by study duration
+ggplot(data=subset(uniq_integ, !is.na(craving_status)),
+       aes(x=as.factor(pid), fill=craving_status)) + geom_bar(stat="count") +
+  labs(title = "Compliance Per Participant", x ="Participant MUSE ID", y = "Count") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 6))
+```
